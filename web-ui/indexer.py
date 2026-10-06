@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+# =============================================================================
+# DizerCore AI Assistant
+# -----------------------------------------------------------------------------
+# File:    web-ui/indexer.py
+# Purpose: Build a SQLite FTS5 index of the reference repo. Only indexes the
+#          current expansion's SQL (12.x) plus base schema plus source code.
+#          Set INDEX_ALL_SQL=1 to index every SQL file.
+# =============================================================================
+
+import os
+import sqlite3
+import sys
+import time
+
+REPO_DIR = os.environ.get("REFERENCE_DIR", "/data/reference")
+DB_FILE = os.environ.get("INDEX_DB", "/data/web-ui/dizercore-index.db")
+
+SQL_INCLUDE_DIRS = {"12.x"}
+INCLUDE_BASE_SQL = True
+INDEX_ALL_SQL = os.environ.get("INDEX_ALL_SQL", "0") == "1"
+
+INDEX_EXTENSIONS = {
+    ".cpp", ".c", ".h", ".hpp", ".cc", ".inl",
+    ".sql", ".py", ".lua",
+    ".cs", ".inc", ".ipp", ".md", ".txt",
+}
+
+MAX_FILE_SIZE = 5 * 1024 * 1024
+
+
+def find_reference_repo():
+    if not os.path.isdir(REPO_DIR):
+        return None
+    for name in sorted(os.listdir(REPO_DIR)):
+        full = os.path.join(REPO_DIR, name)
+        if os.path.isdir(full) and os.path.isdir(os.path.join(full, ".git")):
+            return full
+    return None
+
+
+def should_include_path(rel_path):
+    parts = rel_path.split(os.sep)
+    if not parts:
+        return True
+    top = parts[0]
+    if top in {".git", "dep", "contrib", "doc", "docs", "tests",
+               "node_modules", "build", "bin", "cmake"}:
+        return False
+    if top == "src":
+        return True
+    if top == "sql":
+        if INDEX_ALL_SQL:
+            return True
+        if len(parts) < 2:
+            return False
+        section = parts[1]
+        if section == "base":
+            return INCLUDE_BASE_SQL
+        if section == "old" and len(parts) >= 3:
+            return parts[2] in SQL_INCLUDE_DIRS
+        if section == "updates" and len(parts) >= 3:
+            return parts[2] in SQL_INCLUDE_DIRS
+        return False
+    return False
+
+
+def build_index():
+    repo = find_reference_repo()
+    if not repo:
+        print(f"No reference repo found under {REPO_DIR}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Indexing: {repo}")
+    print(f"Database: {DB_FILE}")
+    if INDEX_ALL_SQL:
+        print("Mode: ALL SQL versions")
+    else:
+        print(f"Mode: SQL versions {sorted(SQL_INCLUDE_DIRS)}"
+              f"{' + base schema' if INCLUDE_BASE_SQL else ''}")
+    print()
+
+    os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
+    # Write to a temp file first, then rename. Avoids partial-index reads
+    # if the process is interrupted or the watcher races another rebuild.
+    tmp_db = DB_FILE + ".building"
+    if os.path.exists(tmp_db):
+        os.remove(tmp_db)
+
+    conn = sqlite3.connect(tmp_db)
+    conn.executescript("""
+        PRAGMA journal_mode = MEMORY;
+        PRAGMA synchronous = OFF;
+        PRAGMA temp_store = MEMORY;
+        PRAGMA cache_size = -64000;
+
+        CREATE VIRTUAL TABLE files USING fts5(
+            path,
+            content,
+            tokenize = 'unicode61 remove_diacritics 2'
+        );
+    """)
+
+    count = 0
+    total_bytes = 0
+    skipped_by_size = 0
+    skipped_by_path = 0
+    started = time.time()
+    
+    conn.execute("BEGIN")
+    
+    for root, dirs, files in os.walk(repo):
+        dirs[:] = [d for d in dirs
+                   if d not in {".git", "node_modules", "build", "bin"}]
+
+        for fname in files:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in INDEX_EXTENSIONS:
+                continue
+
+            full = os.path.join(root, fname)
+            rel = os.path.relpath(full, repo)
+
+            if not should_include_path(rel):
+                skipped_by_path += 1
+                continue
+
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                continue
+
+            if size > MAX_FILE_SIZE:
+                skipped_by_size += 1
+                continue
+
+            try:
+                with open(full, "r", errors="ignore") as f:
+                    content = f.read()
+            except Exception:
+                continue
+
+            conn.execute(
+                "INSERT INTO files (path, content) VALUES (?, ?)",
+                (rel, content),
+            )
+            count += 1
+            total_bytes += len(content)
+
+            if count % 500 == 0:
+                elapsed = time.time() - started
+                rate = count / elapsed if elapsed > 0 else 0
+                print(f"  {count} files ({total_bytes // (1024*1024)} MB) "
+                      f"in {elapsed:.1f}s ({rate:.0f} files/s)")
+
+    print()
+    print("Optimizing FTS5 index ...")
+    conn.commit()
+    conn.execute("INSERT INTO files(files) VALUES('optimize')")
+    conn.commit()
+    conn.close()
+
+    # Atomic swap
+    if os.path.exists(DB_FILE):
+        os.remove(DB_FILE)
+    os.rename(tmp_db, DB_FILE)
+    try:
+        os.chmod(DB_FILE, 0o644)
+    except OSError:
+        pass
+
+    elapsed = time.time() - started
+    size = os.path.getsize(DB_FILE) / (1024 * 1024)
+    print()
+    print(f"Indexed {count} files, {total_bytes // (1024*1024)} MB of text")
+    print(f"Skipped {skipped_by_path} by path filter")
+    print(f"Skipped {skipped_by_size} by size (>{MAX_FILE_SIZE // (1024*1024)} MB)")
+    print(f"Index size: {size:.1f} MB")
+    print(f"Time: {elapsed:.1f}s")
+
+
+if __name__ == "__main__":
+    build_index()

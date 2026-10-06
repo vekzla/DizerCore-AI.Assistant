@@ -1,0 +1,144 @@
+# TrinityCore 12.1.0 Midnight — Reference Data for Prompt Generation
+
+## C++ Source Locations
+src/server/game/Spells/SpellMgr.cpp
+src/server/game/Spells/Spell.cpp
+src/server/game/Spells/SpellEffects.cpp
+src/server/game/Entities/Player/Player.cpp
+src/server/game/Entities/Unit/Unit.cpp
+src/server/game/Entities/Creature/Creature.cpp
+src/server/game/Server/WorldSession.cpp
+src/server/game/Server/Packets/SpellPackets.cpp
+src/server/game/Server/Packets/MovementPackets.cpp
+src/server/game/Server/Packets/QuestPackets.cpp
+src/server/game/Handlers/SpellHandler.cpp
+src/server/game/Handlers/MovementHandler.cpp
+src/server/game/Handlers/QuestHandler.cpp
+src/server/game/AI/SmartScripts/SmartScriptMgr.cpp
+src/server/game/AI/SmartScripts/SmartAI.cpp
+src/server/game/DataStores/DBCStores.cpp
+src/server/game/DataStores/DB2Stores.cpp
+src/server/game/Movement/MovementInfo.cpp
+
+## World Database Tables
+quest_template
+quest_template_addon
+quest_objectives
+creature_template
+creature_template_addon
+creature
+gameobject_template
+gameobject
+smart_scripts
+spell_area
+spell_script_names
+spell_group
+spell_proc
+conditions
+creature_loot_template
+reference_loot_template
+playercreateinfo
+playercreateinfo_spell_custom
+page_text
+npc_text
+gossip_menu
+gossip_menu_option
+points_of_interest
+
+## Opcodes (verify against Opcodes.h for 12.1.0)
+CMSG_CAST_SPELL
+CMSG_MOVE_* (movement)
+CMSG_QUEST_ACCEPT
+CMSG_QUEST_COMPLETE
+CMSG_QUEST_QUERY
+CMSG_GOSSIP_HELLO
+CMSG_GOSSIP_SELECT_OPTION
+CMSG_USE_ITEM
+CMSG_ATTACK_SWING
+SMSG_SPELL_START
+SMSG_SPELL_GO
+SMSG_QUEST_UPDATE_*
+SMSG_GOSSIP_MESSAGE
+SMSG_UPDATE_OBJECT
+SMSG_MOVE_* (movement)
+
+## DBC / DB2 Files
+Spell.dbc
+SpellVisual.dbc
+SpellVisualKit.dbc
+SpellDuration.dbc
+SpellCastTimes.dbc
+SpellRange.dbc
+Item.db2
+ItemSparse.db2
+ItemEffect.db2
+Creature.db2
+CreatureDisplayInfo.db2
+QuestV2.db2
+Map.db2
+AreaTable.db2
+ChrClasses.db2
+ChrRaces.db2
+Talent.db2
+TalentTab.db2
+SkillLine.db2
+SkillLineAbility.db2
+
+## SMART_SCRIPT Constants
+-- Source types
+0 = SMART_SCRIPT_TYPE_CREATURE
+1 = SMART_SCRIPT_TYPE_GAMEOBJECT
+2 = SMART_SCRIPT_TYPE_AREATRIGGER
+9 = SMART_SCRIPT_TYPE_TIMED_ACTIONLIST
+
+-- Events
+SMART_EVENT_HEALTH_PCT = 2
+SMART_EVENT_MANA_PCT = 3
+SMART_EVENT_AGGRO = 4
+SMART_EVENT_KILL = 6
+SMART_EVENT_DEATH = 7
+SMART_EVENT_SPELLHIT = 8
+SMART_EVENT_ACCEPTED_QUEST = 19
+SMART_EVENT_REWARD_QUEST = 20
+SMART_EVENT_TIMER = 22
+
+-- Actions
+SMART_ACTION_TALK = 1
+SMART_ACTION_MORPH_TO_ENTRY = 3
+SMART_ACTION_EMOTE = 5
+SMART_ACTION_CAST = 11
+SMART_ACTION_SUMMON_CREATURE = 12
+SMART_ACTION_CALL_KILLEDMONSTER = 33
+SMART_ACTION_ADD_QUEST_CREDIT = 58
+SMART_ACTION_UPDATE_TEMPLATE = 66
+
+-- Targets
+SMART_TARGET_SELF = 1
+SMART_TARGET_VICTIM = 2
+SMART_TARGET_HOSTILE_SECOND_AGGRO = 5
+SMART_TARGET_INVOKER = 7
+SMART_TARGET_CREATURE_RANGE = 8
+SMART_TARGET_PLAYER_RANGE = 17
+
+## Common Patterns
+- Quest credit fires via SMART_ACTION_ADD_QUEST_CREDIT (58), action_param1 = quest ID
+- Spell casting from script: SMART_ACTION_CAST (11), action_param1 = spell ID
+- Phase transitions: SMART_EVENT_HEALTH_PCT, event_param1 = percent (0-100)
+- Timed actions: SMART_EVENT_TIMER, event_param1 = initial ms, event_param2 = repeat ms
+- Hot reload without restart: .reload smart_scripts, .reload quest_template, .reload creature_template
+
+## Testing Commands (in-game GM)
+.quest complete <quest_id>
+.cast <spell_id>
+.reload smart_scripts
+.reload quest_template
+.reload creature_template
+.gm on
+.gm off
+
+## Common Errors and Causes
+"Invalid opcode" — packet structure mismatch with 12.1.0 client
+"Spell X not found" — Spell.dbc missing entry or DBC not loaded at startup
+"Quest credit not firing" — check smart_scripts action_param1 vs quest_template entry
+"Creature not spawning" — check creature table + phase_mask in spawn
+"No such row in conditions" — conditions table missing SourceType/SourceGroup for the case

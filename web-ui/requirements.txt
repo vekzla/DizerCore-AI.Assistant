@@ -1,0 +1,5 @@
+# DizerCore AI Assistant
+# Python dependencies for the Pi Prompt Gateway Web UI.
+flask
+flask-cors
+psutil
