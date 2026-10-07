@@ -43,7 +43,7 @@ fi
 # Runs install.sh inside a detached systemd unit so it survives the  
 # prompt-gateway restart that happens at step 6.  
 if [[ "${DIZERCORE_UPDATE:-0}" == "1" && -z "${DIZERCORE_UPDATE_UNIT:-}" ]]; then  
-  exec systemd-run --unit=dizercore-update --description="DizerCore self-update" --collect /bin/bash -c "cd /data/dizercore-src && git fetch origin main && git reset --hard origin/main && DIZERCORE_UPDATE_UNIT=1 DIZERCORE_NON_INTERACTIVE=1 bash install.sh >> /var/log/dizercore-update.log 2>&1"  
+  exec systemd-run --unit=dizercore-update --description="DizerCore self-update" --collect /bin/bash -c "cd /data/dizercore-src && git config --system --add safe.directory /data/dizercore-src && sudo -u tadashi git fetch origin main && sudo -u tadashi git reset --hard origin/main && DIZERCORE_UPDATE_UNIT=1 DIZERCORE_NON_INTERACTIVE=1 bash install.sh >> /var/log/dizercore-update.log 2>&1"  
 fi
 
 # ---------- bootstrap clone if running from a pipe ----------
