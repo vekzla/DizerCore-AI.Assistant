@@ -65,6 +65,9 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# ---------- sanitize source files ----------  
+find "$PWD" -type f \( -name '*.sh' -o -name '*.py' -o -name '*.service' -o -name '*.json' \) -exec sed -i '1s/^\xEF\xBB\xBF//; s/\r$//; s/[ \t]*$//' {} +
+
 # ---------- source common.sh (logging + paths) ----------
 source lib/common.sh
 
