@@ -1015,15 +1015,26 @@ def start_update():
                 f.write("")  
         except OSError:  
             pass  
-        env = {**os.environ, "DIZERCORE_UPDATE": "1",  
-               "DIZERCORE_NON_INTERACTIVE": "1"}  
-        r = subprocess.run(  
-            ["sudo", "-n", "/bin/bash", os.path.join(SRC_DIR, "install.sh")],  
-            env=env, cwd=SRC_DIR, capture_output=True, text=True, timeout=15)  
+        # NOTE: sudo's env_reset strips DIZERCORE_UPDATE=1 — pass the flags  
+        # through `env` inside the sudo command so install.sh sees them and  
+        # self-detaches into the dizercore-update systemd unit.  
+        try:  
+            r = subprocess.run(  
+                ["sudo", "-n", "env", "DIZERCORE_UPDATE=1",  
+                 "DIZERCORE_NON_INTERACTIVE=1",  
+                 "/bin/bash", os.path.join(SRC_DIR, "install.sh")],  
+                cwd=SRC_DIR, capture_output=True, text=True, timeout=30)  
+        except subprocess.TimeoutExpired:  
+            # sudo may be killed mid-detach — check whether the unit actually  
+            # registered before reporting failure.  
+            if _update_unit_active():  
+                _remote_cache["checked_at"] = 0  
+                return jsonify({"status": "started"})  
+            return jsonify({"error": "launch timed out and no update unit is running"}), 500  
     if r.returncode != 0:  
         return jsonify({"error": f"launch failed: {r.stderr.strip() or r.stdout.strip()}"}), 500  
     _remote_cache["checked_at"] = 0  
-    return jsonify({"status": "started"})  
+    return jsonify({"status": "started"})
   
   
 @app.route("/api/update/status")  
