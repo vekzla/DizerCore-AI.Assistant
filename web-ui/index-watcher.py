@@ -5,7 +5,7 @@
 # File:    web-ui/index-watcher.py  
 # Purpose: Keep the FTS5 reference index up to date. Also rebuilds the  
 #          training dataset when the reference repo changes, so the user's  
-#          next Colab run has fresh data without any manual step.  
+#          next training run has fresh data without any manual step.  
 # =============================================================================  
   
 import os  
@@ -14,7 +14,7 @@ import subprocess
 import sys  
 import threading  
 import time  
-from http.server import BaseHTTPRequestHandler, HTTPServer  
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  
   
 # ---------- configuration ----------  
 REFERENCE_DIR = os.environ.get("REFERENCE_DIR", "/data/reference")  
@@ -28,8 +28,8 @@ ACTIVITY_FILE = os.environ.get("ACTIVITY_FILE", "/data/web-ui/.ai-activity")
 CHECK_INTERVAL = int(os.environ.get("WATCH_INTERVAL", "300"))  
 WATCH_HOST = "127.0.0.1"  
 WATCH_PORT = int(os.environ.get("WATCH_PORT", "8091"))  
-INDEX_TIMEOUT = 900  
-DATASET_TIMEOUT = 900  
+INDEX_TIMEOUT = 3600  
+DATASET_TIMEOUT = 1800  
   
 REBUILD_DATASET = os.environ.get("REBUILD_DATASET", "1") == "1"  
   
@@ -61,6 +61,9 @@ def log(msg):
 # =============================================================================  
   
 def find_reference_repo():  
+    # REFERENCE_DIR itself may be the repo (cloned directly into it)  
+    if os.path.isdir(os.path.join(REFERENCE_DIR, ".git")):  
+        return REFERENCE_DIR  
     if not os.path.isdir(REFERENCE_DIR):  
         return None  
     for name in sorted(os.listdir(REFERENCE_DIR)):  
@@ -145,10 +148,10 @@ def run_indexer(reason):
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,  
             text=True, bufsize=1,  
         )  
+        # Forward every indexer line so optimize/errors are visible  
         for line in iter(proc.stdout.readline, ""):  
             line = line.rstrip()  
-            if line and ("files (" in line or "Index size:" in line  
-                         or "Time:" in line or "Indexed " in line):  
+            if line:  
                 log(f"  indexer: {line}")  
   
         proc.wait(timeout=INDEX_TIMEOUT)  
@@ -222,8 +225,7 @@ def run_dataset_builder():
   
         for line in iter(proc.stdout.readline, ""):  
             line = line.rstrip()  
-            if line and ("examples so far" in line or "Total examples" in line  
-                         or "Written to" in line):  
+            if line:  
                 log(f"  dataset: {line}")  
   
         proc.wait(timeout=DATASET_TIMEOUT)  
@@ -362,7 +364,10 @@ class Handler(BaseHTTPRequestHandler):
   
   
 def start_http_server():  
-    server = HTTPServer((WATCH_HOST, WATCH_PORT), Handler)  
+    # ThreadingHTTPServer so /status answers even while a build saturates  
+    # the CPU — a single-threaded server was why the UI showed "down".  
+    server = ThreadingHTTPServer((WATCH_HOST, WATCH_PORT), Handler)  
+    server.daemon_threads = True  
     log(f"Control API listening on http://{WATCH_HOST}:{WATCH_PORT}")  
     server.serve_forever()  
   
