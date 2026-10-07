@@ -40,6 +40,19 @@ TC_TABLES = [
     "creature", "gameobject", "waypoint_path", "waypoint_path_node",  
 ]  
 TC_TABLE_SET = set(TC_TABLES)  
+
+# Maps the installed-model key in /data/.dizercore-model to the HF repo the  
+# Kaggle notebook should train. Written alongside the dataset so training  
+# always matches whatever model the user installed.  
+BASE_MAP = {  
+    "0.5b":      "Qwen/Qwen2.5-Coder-0.5B-Instruct",  
+    "0.5b-base": "Qwen/Qwen2.5-0.5B-Instruct",  
+    "1.5b":      "Qwen/Qwen2.5-Coder-1.5B-Instruct",  
+    "1.5b-base": "Qwen/Qwen2.5-1.5B-Instruct",  
+    "3b":        "Qwen/Qwen2.5-Coder-3B-Instruct",  
+    "3b-base":   "Qwen/Qwen2.5-3B-Instruct",  
+}  
+MODEL_KEY_FILE = "/data/.dizercore-model"
   
 # Matches an identifier that follows a SQL keyword: FROM x, INSERT INTO x,  
 # UPDATE x, JOIN x, DELETE FROM x, ALTER TABLE x, etc.  
@@ -415,12 +428,22 @@ def build():
                     last_reported = count  
                     print(f"  {count} examples so far ...", flush=True)  
   
-    print(flush=True)  
+print(flush=True)  
     print(f"Total examples: {count}", flush=True)  
     for cat, n in sorted(by_cat.items(), key=lambda x: -x[1]):  
         print(f"  {cat}: {n}", flush=True)  
-    print(f"Written to: {OUTPUT_FILE}", flush=True)  
-  
-  
+    key = "1.5b-base"  
+    try:  
+        with open(MODEL_KEY_FILE) as f:  
+            key = f.read().strip() or key  
+    except OSError:  
+        pass  
+    base_repo = BASE_MAP.get(key, BASE_MAP["1.5b-base"])  
+    base_file = os.path.join(os.path.dirname(OUTPUT_FILE), "dizercore-base.txt")  
+    with open(base_file, "w") as f:  
+        f.write(base_repo + "\n")  
+    print(f"Base model: {base_repo} (install key '{key}') -> {base_file}", flush=True)  
+    print(f"Written to: {OUTPUT_FILE}", flush=True) 
+   
 if __name__ == "__main__":  
     build()
