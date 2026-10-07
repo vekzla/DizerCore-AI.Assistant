@@ -8,6 +8,9 @@
 #          function inventories, SQL table usage, and cross-references.  
 #  
 # Output:  /data/training/dizercore-dataset.jsonl  
+#          Line 1 is a metadata record carrying the base model repo so the  
+#          training notebook automatically trains whatever model the user  
+#          installed on the Pi.  
 # =============================================================================  
   
 import hashlib  
@@ -40,19 +43,6 @@ TC_TABLES = [
     "creature", "gameobject", "waypoint_path", "waypoint_path_node",  
 ]  
 TC_TABLE_SET = set(TC_TABLES)  
-
-# Maps the installed-model key in /data/.dizercore-model to the HF repo the  
-# Kaggle notebook should train. Written alongside the dataset so training  
-# always matches whatever model the user installed.  
-BASE_MAP = {  
-    "0.5b":      "Qwen/Qwen2.5-Coder-0.5B-Instruct",  
-    "0.5b-base": "Qwen/Qwen2.5-0.5B-Instruct",  
-    "1.5b":      "Qwen/Qwen2.5-Coder-1.5B-Instruct",  
-    "1.5b-base": "Qwen/Qwen2.5-1.5B-Instruct",  
-    "3b":        "Qwen/Qwen2.5-Coder-3B-Instruct",  
-    "3b-base":   "Qwen/Qwen2.5-3B-Instruct",  
-}  
-MODEL_KEY_FILE = "/data/.dizercore-model"
   
 # Matches an identifier that follows a SQL keyword: FROM x, INSERT INTO x,  
 # UPDATE x, JOIN x, DELETE FROM x, ALTER TABLE x, etc.  
@@ -68,6 +58,31 @@ TC_CLASSES = [
     "CreatureAI", "ScriptedAI", "SmartAI", "SmartScript", "Quest", "Loot",  
     "Item", "GameObject", "TempSummon", "Pet", "Battleground",  
 ]  
+  
+# Maps the installed-model key (written to /data/.dizercore-model by the  
+# installer when the user picks a model) to the HuggingFace repo the  
+# notebook should train. Keeps training in the same family as whatever  
+# llama-server is running.  
+MODEL_KEY_FILE = "/data/.dizercore-model"  
+BASE_MAP = {  
+    "0.5b":      "Qwen/Qwen2.5-Coder-0.5B-Instruct",  
+    "0.5b-base": "Qwen/Qwen2.5-0.5B-Instruct",  
+    "1.5b":      "Qwen/Qwen2.5-Coder-1.5B-Instruct",  
+    "1.5b-base": "Qwen/Qwen2.5-1.5B-Instruct",  
+    "3b":        "Qwen/Qwen2.5-Coder-3B-Instruct",  
+    "3b-base":   "Qwen/Qwen2.5-3B-Instruct",  
+}  
+DEFAULT_BASE = "Qwen/Qwen2.5-1.5B-Instruct"  
+  
+  
+def installed_base_model():  
+    """Return the HF repo for the model the user installed, or the default."""  
+    try:  
+        with open(MODEL_KEY_FILE) as f:  
+            key = f.read().strip()  
+    except OSError:  
+        key = ""  
+    return BASE_MAP.get(key, DEFAULT_BASE), key or "(none)"  
   
   
 def find_reference_repo():  
@@ -92,7 +107,6 @@ def extract_functions(content):
     out = []  
     for m in pattern.finditer(content):  
         start = m.start()  
-        # Find matching closing brace  
         depth = 0  
         end = None  
         for i in range(m.end() - 1, min(m.end() + 12000, len(content))):  
@@ -152,7 +166,6 @@ def find_related_ids(text):
     ids = set()  
     for m in re.finditer(r"\b(?:ID|Id|id|entry|Entry)\s*[=:]\s*(\d{3,8})\b", text):  
         ids.add(m.group(1))  
-    # First column of SQL INSERT rows: INSERT INTO x (...) VALUES (12345, ...)  
     for m in re.finditer(r"\bVALUES\s*\(\s*(\d{3,8})\s*,", text, re.IGNORECASE):  
         ids.add(m.group(1))  
     return sorted(ids)[:10]  
@@ -214,7 +227,6 @@ def example_function(cls, method, sig, body, rel_path, line_num):
     opcodes = find_opcodes(body)  
   
     body_lines = body.splitlines()  
-    # Include the real body, capped so examples stay small  
     body_excerpt = "\n".join(body_lines[:40])  
     if len(body_lines) > 40:  
         body_excerpt += "\n    // ... (truncated)"  
@@ -338,8 +350,10 @@ def build():
         print(f"No reference repo under {REFERENCE_DIR}", file=sys.stderr, flush=True)  
         sys.exit(1)  
   
+    base_repo, model_key = installed_base_model()  
     print(f"Building dataset from: {repo}", flush=True)  
     print(f"Output: {OUTPUT_FILE}", flush=True)  
+    print(f"Base model tag: {base_repo} (install key '{model_key}')", flush=True)  
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)  
   
     count = 0  
@@ -349,6 +363,11 @@ def build():
     seen_table_fps = set()  
   
     with open(OUTPUT_FILE, "w") as out:  
+        # Line 1: metadata record. The notebook reads base_model from it and  
+        # filters it out of training examples.  
+        meta = {"_meta": True, "base_model": base_repo, "install_key": model_key}  
+        out.write(json.dumps(meta) + "\n")  
+  
         for root, dirs, files in os.walk(repo):  
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]  
   
@@ -372,7 +391,6 @@ def build():
   
                 cat = category_for(ext)  
   
-                # Extract once per file, reuse across generators  
                 fns = extract_functions(content) if cat in ("cpp", "header") else []  
                 tables = find_tables(content)  
                 opcodes = find_opcodes(content)  
@@ -428,22 +446,13 @@ def build():
                     last_reported = count  
                     print(f"  {count} examples so far ...", flush=True)  
   
-print(flush=True)  
+    print(flush=True)  
     print(f"Total examples: {count}", flush=True)  
     for cat, n in sorted(by_cat.items(), key=lambda x: -x[1]):  
         print(f"  {cat}: {n}", flush=True)  
-    key = "1.5b-base"  
-    try:  
-        with open(MODEL_KEY_FILE) as f:  
-            key = f.read().strip() or key  
-    except OSError:  
-        pass  
-    base_repo = BASE_MAP.get(key, BASE_MAP["1.5b-base"])  
-    base_file = os.path.join(os.path.dirname(OUTPUT_FILE), "dizercore-base.txt")  
-    with open(base_file, "w") as f:  
-        f.write(base_repo + "\n")  
-    print(f"Base model: {base_repo} (install key '{key}') -> {base_file}", flush=True)  
-    print(f"Written to: {OUTPUT_FILE}", flush=True) 
-   
+    print(f"Base model: {base_repo}", flush=True)  
+    print(f"Written to: {OUTPUT_FILE}", flush=True)  
+  
+  
 if __name__ == "__main__":  
     build()
