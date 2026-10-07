@@ -50,20 +50,19 @@ install_training() {
   fi  
   
   # ---------- sudoers rule for the deploy helper ----------  
+  # printf instead of heredoc: trailing whitespace cannot break it  
   local sudoers_file="/etc/sudoers.d/dizercore-update"  
-  cat > "$sudoers_file" <<EOF  
-${REAL_USER} ALL=(ALL) NOPASSWD: /bin/bash ${SRC_DIR}/install.sh  
-${REAL_USER} ALL=(ALL) NOPASSWD: ${SRC_DIR}/install.sh  
-${REAL_USER} ALL=(ALL) NOPASSWD: ${WEB_UI_DIR}/training-deploy.sh  
-EOF  
+  printf '%s ALL=(ALL) NOPASSWD: /bin/bash %s/install.sh\n%s ALL=(ALL) NOPASSWD: %s/install.sh\n%s ALL=(ALL) NOPASSWD: %s/training-deploy.sh\n' "$REAL_USER" "$SRC_DIR" "$REAL_USER" "$SRC_DIR" "$REAL_USER" "$WEB_UI_DIR" > "$sudoers_file"  
   chmod 440 "$sudoers_file"  
   
+  # Validate sudoers syntax before moving on  
   if visudo -c -f "$sudoers_file" >/dev/null 2>&1; then  
     log "Sudoers rules updated"  
   else  
     err "Sudoers validation failed — check ${sudoers_file}"  
   fi  
   
+  # ---------- dataset marker check ----------  
   if [[ -f "${TRAINING_DIR}/dataset-builder.py" ]]; then  
     info "Dataset builder installed. Open the Web UI's Training tab to build."  
   fi  
