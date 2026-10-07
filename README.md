@@ -298,7 +298,7 @@ EOF
 
 ## Self-Update
 
-The **Update** button pulls the latest code, re-runs the installer in non-interactive mode, and preserves all your data.
+the update now runs in a detached systemd-run --unit=dizercore-update unit so it survives the prompt-gateway restart mid-update, with status read from systemctl is-active dizercore-update + /var/log/dizercore-update.log
 
 1. `git fetch origin main` in `/data/dizercore-src`
 2. `git reset --hard origin/main`
@@ -340,7 +340,7 @@ Or answer `y` at the wipe prompt when re-running the installer.
 
 Fine-tune whichever Qwen2.5 model is installed on the Pi (the dataset carries a meta row naming the base model — e.g. 3b-base → Qwen/Qwen2.5-3B-Instruct). Runs once on Kaggle's free T4 GPU; produces a ~1–2 GB GGUF that replaces the base model.
 
-Full walkthrough: training/README.md [blocked]
+Full walkthrough: training/README.md [training/README.md](training/README.md)
 The Four Phases
 Phase	Where	Time
 1. Build dataset	Pi (Web UI)	2–5 min
@@ -355,51 +355,48 @@ If you switch models on the Pi, rebuild the dataset before retraining — the me
 | File | Purpose |
 |---|---|
 | `training/dataset-builder.py` | Walks `/data/reference/`, produces JSONL |
-| `training/dizercore-colab.ipynb` | Single-cell training notebook |
+| `training/dizercore-colab.ipynb` | Kaggle training notebook (multi-cell) |
 | `training/README.md` | Step-by-step guide |
 | `web-ui/training.py` | Flask blueprint — build, upload, deploy, revert |
 | `web-ui/training-deploy.sh` | Privileged helper that swaps the active model |
 
-### What Training Does
-
-The LoRA adapter teaches the model WoW Core's patterns:
-
-    Naming conventions (SMART_ACTION_ADD_QUEST_CREDIT, spell_area, quest_poi)
-    File layout (src/server/game/, sql/old/12.x/world/)
-    Common APIs and signatures
-    SQL row structure
-
-Specific facts (like quest ID 94210) still come from FTS5 retrieval at inference time.
-
-    RAG = facts
-    LoRA = style
-
-### Reverting
-
-Training tab → Revert to Base Model. Switches back in ~15 seconds. Trained file stays on disk.
-When to Retrain
-
-Only when:
-
-    You switch the installed base model (rebuild the dataset too)
-    Your WoW Core fork diverges significantly
-    You've added substantial new SQL content
-
-## System Audit
-
-Read-only diagnostic. Checks every component and reports what's present, missing, or misconfigured.
-
-### Run It
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/vekzla/DizerCore-AI.Assistant/main/audit.sh -o /tmp/audit.sh
+### What Training Does  
+  
+The LoRA adapter teaches the model WoW Core's patterns:  
+  
+- Naming conventions (`SMART_ACTION_ADD_QUEST_CREDIT`, `spell_area`, `quest_poi`)  
+- File layout (`src/server/game/`, `sql/old/12.x/world/`)  
+- Common APIs and signatures  
+- SQL row structure  
+  
+Specific facts (like quest ID 94210) still come from FTS5 retrieval at inference time:  
+  
+- **RAG** = facts  
+- **LoRA** = style  
+  
+### Reverting  
+  
+Training tab → **Revert to Base Model**. Switches back in ~15 seconds. Trained file stays on disk.  
+  
+### When to Retrain  
+  
+Only when:  
+  
+- You switch the installed base model (rebuild the dataset too)  
+- Your WoW Core fork diverges significantly  
+- You've added substantial new SQL content  
+  
+---  
+  
+## System Audit  
+  
+Read-only diagnostic. Checks every component and reports what's present, missing, or misconfigured.  
+  
+### Run It  
+  
+```bash  
+curl -fsSL https://raw.githubusercontent.com/vekzla/DizerCore-AI.Assistant/main/audit.sh -o /tmp/audit.sh  
 sudo bash /tmp/audit.sh
-```
-
-Or from the repo clone:
-
-```bash
-sudo bash /data/dizercore-src/audit.sh
 ```
 
 ### What It Checks
