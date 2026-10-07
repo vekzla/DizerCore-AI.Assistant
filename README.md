@@ -209,7 +209,7 @@ Training button colour:
 
 ---
 
-## TrinityCore Domain Routing
+## WoW Core Domain Routing
 
 Auto-detects the domain of each prompt and applies a matching system prompt.
 
@@ -338,18 +338,17 @@ Or answer `y` at the wipe prompt when re-running the installer.
 
 ## Custom Model Training
 
-Fine-tune Qwen2.5-1.5B-Instruct on your WoW repo. Runs once, ~2 hours on a T4-class GPU. Produces a ~940 MB GGUF that replaces the base model.
+Fine-tune whichever Qwen2.5 model is installed on the Pi (the dataset carries a meta row naming the base model — e.g. 3b-base → Qwen/Qwen2.5-3B-Instruct). Runs once on Kaggle's free T4 GPU; produces a ~1–2 GB GGUF that replaces the base model.
 
-Full walkthrough: [`training/README.md`](training/README.md)
+Full walkthrough: training/README.md [blocked]
+The Four Phases
+Phase	Where	Time
+1. Build dataset	Pi (Web UI)	2–5 min
+2. Train + convert	Kaggle notebook	~1–3 hours
+3. Upload GGUF	Pi (Web UI)	~1 min
+4. Test	Pi (Web UI)	instant
 
-### The Four Phases
-
-| Phase | Where | Time |
-|---|---|---|
-| **1. Build dataset** | Pi (Web UI) | 2–5 min |
-| **2. Train + convert** | GPU notebook | ~2 hours |
-| **3. Upload GGUF** | Pi (Web UI) | ~1 min |
-| **4. Test** | Pi (Web UI) | instant |
+If you switch models on the Pi, rebuild the dataset before retraining — the meta row must match the installed model or the wrong base gets trained.
 
 ### Files in the Repo
 
@@ -363,32 +362,28 @@ Full walkthrough: [`training/README.md`](training/README.md)
 
 ### What Training Does
 
-The LoRA adapter teaches the model **TrinityCore's patterns**:
+The LoRA adapter teaches the model WoW Core's patterns:
 
-- Naming conventions (`SMART_ACTION_ADD_QUEST_CREDIT`, `spell_area`, `quest_poi`)
-- File layout (`src/server/game/`, `sql/old/12.x/world/`)
-- Common APIs and signatures
-- SQL row structure
+    Naming conventions (SMART_ACTION_ADD_QUEST_CREDIT, spell_area, quest_poi)
+    File layout (src/server/game/, sql/old/12.x/world/)
+    Common APIs and signatures
+    SQL row structure
 
-Specific facts (like quest ID 94210) still come from **FTS5 retrieval** at inference time.
+Specific facts (like quest ID 94210) still come from FTS5 retrieval at inference time.
 
-- RAG = facts
-- LoRA = style
+    RAG = facts
+    LoRA = style
 
 ### Reverting
 
-Training tab → **Revert to Base Model**. Switches back in ~15 seconds. Trained file stays on disk.
-
-### When to Retrain
+Training tab → Revert to Base Model. Switches back in ~15 seconds. Trained file stays on disk.
+When to Retrain
 
 Only when:
-- The base model version changes
-- Your TrinityCore fork diverges significantly
-- You've added substantial new SQL content
 
-For personal use, once is enough for months.
-
----
+    You switch the installed base model (rebuild the dataset too)
+    Your WoW Core fork diverges significantly
+    You've added substantial new SQL content
 
 ## System Audit
 
