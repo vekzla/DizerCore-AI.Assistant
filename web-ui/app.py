@@ -63,6 +63,11 @@ REPO_SEARCH_CHAR_LIMIT = 6000
 REPO_SEARCH_TIMEOUT = 10  
 REPO_SEARCH_MAX_FILES_PER_KEYWORD = 500  
   
+# Seconds to wait for the index-watcher control API. Was 1s — too short  
+# while the indexer saturates the Pi's CPU, which made the UI report  
+# "watcher: down" even though the service was running.  
+WATCHER_TIMEOUT = 5  
+  
 REPO_EXCLUDE_GLOBS = [  
     "!dep/**", "!contrib/**", "!doc/**", "!tests/**", "!cmake/**",  
     "!.git/**", "!node_modules/**", "!*.min.*",  
@@ -192,6 +197,7 @@ RULES:
   
 _game_data_cache = {"data": None}  
   
+  
 def _load_game_data():  
     if _game_data_cache["data"] is not None:  
         return _game_data_cache["data"]  
@@ -279,6 +285,7 @@ def _index_keyword_counts(conn, keywords):
         except sqlite3.Error:  
             continue  
     return counts  
+  
   
 # =============================================================================  
 # FTS5 index — primary search path  
@@ -480,22 +487,20 @@ def _search_via_ripgrep(query):
   
   
 def _find_reference_repo():  
-    candidates = [  
-        REFERENCE_DIR,  
-        "/data/reference/TrinityCore",  
-        "/data/reference/trinitycore",  
-    ]  
+    # REFERENCE_DIR itself may be the repo (cloned directly into it)  
+    if os.path.isdir(os.path.join(REFERENCE_DIR, ".git")):  
+        return REFERENCE_DIR  
+    # Otherwise return the first child directory that is a git repo.  
+    # The old version returned REFERENCE_DIR unconditionally (it is always  
+    # a dir), which made system info show "reference" and pointed  
+    # ripgrep at the parent instead of the actual repo.  
     try:  
-        if os.path.isdir(REFERENCE_DIR):  
-            for name in os.listdir(REFERENCE_DIR):  
-                p = os.path.join(REFERENCE_DIR, name)  
-                if os.path.isdir(p) and os.path.isdir(os.path.join(p, ".git")):  
-                    candidates.append(p)  
+        for name in sorted(os.listdir(REFERENCE_DIR)):  
+            p = os.path.join(REFERENCE_DIR, name)  
+            if os.path.isdir(p) and os.path.isdir(os.path.join(p, ".git")):  
+                return p  
     except OSError:  
         pass  
-    for c in candidates:  
-        if os.path.isdir(c):  
-            return c  
     return None  
   
   
@@ -559,6 +564,7 @@ _THINK_PATTERNS = [
     re.compile(r"\[\s*Start thinking\s*\].*", re.DOTALL | re.IGNORECASE),  
     re.compile(r"\[\s*Prompt:.*?Generation:.*?\]", re.DOTALL),  
 ]  
+  
   
 def _strip_thinking(text):  
     if not text:  
@@ -788,14 +794,17 @@ def index_status():
     exists = os.path.isfile(INDEX_DB)  
     size = os.path.getsize(INDEX_DB) if exists else 0  
     count = None  
+    index_error = None  
     if exists:  
         try:  
             conn = _get_index_connection()  
             if conn is not None:  
                 count = conn.execute("SELECT count(*) FROM files").fetchone()[0]  
                 conn.close()  
-        except Exception:  
-            pass  
+            else:  
+                index_error = "could not open index DB"  
+        except Exception as e:  
+            index_error = str(e)  
     mtime = None  
     if exists:  
         try:  
@@ -805,7 +814,7 @@ def index_status():
   
     watcher_state = None  
     try:  
-        with urlopen(f"{WATCHER_URL}/status", timeout=1) as r:  
+        with urlopen(f"{WATCHER_URL}/status", timeout=WATCHER_TIMEOUT) as r:  
             watcher_state = json.loads(r.read())  
     except Exception:  
         watcher_state = None  
@@ -822,6 +831,7 @@ def index_status():
         "exists": exists,  
         "size": size,  
         "count": count,  
+        "index_error": index_error,  
         "mtime": mtime,  
         "path": INDEX_DB,  
         "running": bool((watcher_state or {}).get("running")),  
@@ -887,7 +897,7 @@ def rebuild_index():
 @app.route("/api/watcher/status")  
 def watcher_status():  
     try:  
-        with urlopen(f"{WATCHER_URL}/status", timeout=1) as r:  
+        with urlopen(f"{WATCHER_URL}/status", timeout=WATCHER_TIMEOUT) as r:  
             return jsonify(json.loads(r.read()))  
     except Exception as e:  
         return jsonify({"error": str(e), "up": False}), 503  
@@ -1163,9 +1173,11 @@ def _collect_system_info():
         info["index_size"] = None  
         info["index_files"] = None  
   
-    # Watcher state  
+    # Watcher state — WATCHER_TIMEOUT keeps this working while a build  
+    # saturates the CPU (was timeout=1, which reported a live busy  
+    # watcher as "down").  
     try:  
-        with urlopen(f"{WATCHER_URL}/status", timeout=1) as r:  
+        with urlopen(f"{WATCHER_URL}/status", timeout=WATCHER_TIMEOUT) as r:  
             w = json.loads(r.read())  
         info["watcher"] = "running"  
         info["watcher_last_build"] = w.get("last_build_status") or "never"  
