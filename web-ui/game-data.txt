@@ -1,144 +1,151 @@
-# TrinityCore 12.1.0 Midnight — Reference Data for Prompt Generation
-
-## C++ Source Locations
-src/server/game/Spells/SpellMgr.cpp
-src/server/game/Spells/Spell.cpp
-src/server/game/Spells/SpellEffects.cpp
-src/server/game/Entities/Player/Player.cpp
-src/server/game/Entities/Unit/Unit.cpp
-src/server/game/Entities/Creature/Creature.cpp
-src/server/game/Server/WorldSession.cpp
-src/server/game/Server/Packets/SpellPackets.cpp
-src/server/game/Server/Packets/MovementPackets.cpp
-src/server/game/Server/Packets/QuestPackets.cpp
-src/server/game/Handlers/SpellHandler.cpp
-src/server/game/Handlers/MovementHandler.cpp
-src/server/game/Handlers/QuestHandler.cpp
-src/server/game/AI/SmartScripts/SmartScriptMgr.cpp
-src/server/game/AI/SmartScripts/SmartAI.cpp
-src/server/game/DataStores/DBCStores.cpp
-src/server/game/DataStores/DB2Stores.cpp
-src/server/game/Movement/MovementInfo.cpp
-
-## World Database Tables
-quest_template
-quest_template_addon
-quest_objectives
-creature_template
-creature_template_addon
-creature
-gameobject_template
-gameobject
-smart_scripts
-spell_area
-spell_script_names
-spell_group
-spell_proc
-conditions
-creature_loot_template
-reference_loot_template
-playercreateinfo
-playercreateinfo_spell_custom
-page_text
-npc_text
-gossip_menu
-gossip_menu_option
-points_of_interest
-
-## Opcodes (verify against Opcodes.h for 12.1.0)
-CMSG_CAST_SPELL
-CMSG_MOVE_* (movement)
-CMSG_QUEST_ACCEPT
-CMSG_QUEST_COMPLETE
-CMSG_QUEST_QUERY
-CMSG_GOSSIP_HELLO
-CMSG_GOSSIP_SELECT_OPTION
-CMSG_USE_ITEM
-CMSG_ATTACK_SWING
-SMSG_SPELL_START
-SMSG_SPELL_GO
-SMSG_QUEST_UPDATE_*
-SMSG_GOSSIP_MESSAGE
-SMSG_UPDATE_OBJECT
-SMSG_MOVE_* (movement)
-
-## DBC / DB2 Files
-Spell.dbc
-SpellVisual.dbc
-SpellVisualKit.dbc
-SpellDuration.dbc
-SpellCastTimes.dbc
-SpellRange.dbc
-Item.db2
-ItemSparse.db2
-ItemEffect.db2
-Creature.db2
-CreatureDisplayInfo.db2
-QuestV2.db2
-Map.db2
-AreaTable.db2
-ChrClasses.db2
-ChrRaces.db2
-Talent.db2
-TalentTab.db2
-SkillLine.db2
-SkillLineAbility.db2
-
-## SMART_SCRIPT Constants
--- Source types
-0 = SMART_SCRIPT_TYPE_CREATURE
-1 = SMART_SCRIPT_TYPE_GAMEOBJECT
-2 = SMART_SCRIPT_TYPE_AREATRIGGER
-9 = SMART_SCRIPT_TYPE_TIMED_ACTIONLIST
-
--- Events
-SMART_EVENT_HEALTH_PCT = 2
-SMART_EVENT_MANA_PCT = 3
-SMART_EVENT_AGGRO = 4
-SMART_EVENT_KILL = 6
-SMART_EVENT_DEATH = 7
-SMART_EVENT_SPELLHIT = 8
-SMART_EVENT_ACCEPTED_QUEST = 19
-SMART_EVENT_REWARD_QUEST = 20
-SMART_EVENT_TIMER = 22
-
--- Actions
-SMART_ACTION_TALK = 1
-SMART_ACTION_MORPH_TO_ENTRY = 3
-SMART_ACTION_EMOTE = 5
-SMART_ACTION_CAST = 11
-SMART_ACTION_SUMMON_CREATURE = 12
-SMART_ACTION_CALL_KILLEDMONSTER = 33
-SMART_ACTION_ADD_QUEST_CREDIT = 58
-SMART_ACTION_UPDATE_TEMPLATE = 66
-
--- Targets
-SMART_TARGET_SELF = 1
-SMART_TARGET_VICTIM = 2
-SMART_TARGET_HOSTILE_SECOND_AGGRO = 5
-SMART_TARGET_INVOKER = 7
-SMART_TARGET_CREATURE_RANGE = 8
-SMART_TARGET_PLAYER_RANGE = 17
-
-## Common Patterns
-- Quest credit fires via SMART_ACTION_ADD_QUEST_CREDIT (58), action_param1 = quest ID
-- Spell casting from script: SMART_ACTION_CAST (11), action_param1 = spell ID
-- Phase transitions: SMART_EVENT_HEALTH_PCT, event_param1 = percent (0-100)
-- Timed actions: SMART_EVENT_TIMER, event_param1 = initial ms, event_param2 = repeat ms
-- Hot reload without restart: .reload smart_scripts, .reload quest_template, .reload creature_template
-
-## Testing Commands (in-game GM)
-.quest complete <quest_id>
-.cast <spell_id>
-.reload smart_scripts
-.reload quest_template
-.reload creature_template
-.gm on
-.gm off
-
-## Common Errors and Causes
-"Invalid opcode" — packet structure mismatch with 12.1.0 client
-"Spell X not found" — Spell.dbc missing entry or DBC not loaded at startup
-"Quest credit not firing" — check smart_scripts action_param1 vs quest_template entry
-"Creature not spawning" — check creature table + phase_mask in spawn
-"No such row in conditions" — conditions table missing SourceType/SourceGroup for the case
+# TrinityCore 12.1.0 Midnight — Reference Data for Prompt Generation  
+# Injected into every prompt. Names here are hints — FTS matches and the  
+# schema dump repos are ground truth. If a name conflicts with a retrieved  
+# file, the retrieved file wins.  
+  
+## C++ Source Locations  
+src/server/game/Spells/SpellMgr.cpp          — spell loading, proc, target pos  
+src/server/game/Spells/Spell.cpp             — cast logic, target selection  
+src/server/game/Spells/SpellEffects.cpp      — SPELL_EFFECT_* handlers  
+src/server/game/Entities/Player/Player.cpp   — quest state, items, stats  
+src/server/game/Entities/Unit/Unit.cpp       — auras, damage, movement  
+src/server/game/Entities/Creature/Creature.cpp  
+src/server/game/Server/WorldSession.cpp      — opcode dispatch, packet read  
+src/server/game/Server/Packets/*Packets.cpp  — packet struct serialize/read  
+src/server/game/Handlers/*Handler.cpp        — one handler per opcode family  
+src/server/game/AI/SmartScripts/SmartScriptMgr.cpp  
+src/server/game/AI/SmartScripts/SmartAI.cpp  
+src/server/game/AI/SmartScripts/SmartScript.cpp  
+src/server/game/Conditions/ConditionMgr.cpp  — ConditionType evaluation  
+src/server/game/Loot/LootMgr.cpp             — loot roll, reference chaining  
+src/server/game/Globals/ObjectMgr.cpp        — template loading, gossip, quests  
+src/server/game/DataStores/DBCStores.cpp     — .dbc loaders (sXxxStore)  
+src/server/game/DataStores/DB2Stores.cpp     — .db2 loaders (sXxxStore)  
+src/server/game/Server/Protocol/Opcodes.cpp  — opcode table (source of truth)  
+src/server/game/Server/Protocol/Opcodes.h  
+src/server/game/Movement/MovementInfo.cpp  
+  
+## smart_scripts columns  
+entryorguid, source_type, id, link, event_type, event_phase_mask,  
+event_chance, event_flags, event_param1-6, action_type, action_param1-6,  
+target_type, target_param1-3, target_x/y/z/o, comment  
+  
+## SMART source_type / event_type / action_type / target_type  
+Source:  0=creature  1=gameobject  2=areatrigger  9=timed_actionlist  
+Events:  0=UPDATE_IC  1=UPDATE_OOC  2=HEALTH_PCT  3=MANA_PCT  4=AGGRO  
+         5=KILL  7=DEATH  8=SPELLHIT  11=JUST_SUMMONED  19=ACCEPTED_QUEST  
+         20=REWARD_QUEST  21=REACHED_HOME  22=TIMER  25=RESET  
+         34=MOVEMENTINFORM  46=AREATRIGGER_ONTRIGGER  
+         61=EVENT_PHASE_CHANGE (set/verify phases via event_phase_mask)  
+Actions: 1=TALK  2=SET_FACTION  3=MORPH_TO_ENTRY  5=EMOTE  
+         7=SOUND  11=CAST(param1=spell)  12=SUMMON_CREATURE  
+         20=WP_START / WP_PAUSE / WP_STOP (waypoint path)  
+         22=SET_EVENT_PHASE  26=INC_EVENT_PHASE  
+         33=CALL_KILLEDMONSTER  45=SET_DATA  56=CALL_AREAEXPLOREDOREVENTHAPPENS  
+         58=ADD_QUEST_CREDIT(param1=quest)  66=UPDATE_TEMPLATE  
+         71=CALL_CASTEDCREATUREORGO  85=INVOKER_CAST  
+Targets: 0=NONE  1=SELF  2=VICTIM  3=HOSTILE_SECOND_AGGRO  
+         4=HOSTILE_LAST_AGGRO  5=HOSTILE_RANDOM  7=INVOKER  
+         8=CREATURE_RANGE  9=CREATURE_GUID  10=CREATURE_DISTANCE  
+         17=PLAYER_RANGE  18=PLAYER_DISTANCE  23=PLAYER_WITH_AURA  
+  
+## conditions table  
+SourceType:  1=LOOT  4=ITEM_LOOT  13=GOSSIP_MENU  14=GOSSIP_MENU_OPTION  
+             15=CREATURE_SPELL  17=SPELL_CLICK  20=QUEST_AVAILABLE  
+             22=SPELL  23=AREA  31=SMART_EVENT (SourceGroup = smart_scripts id)  
+ConditionType: 1=AURA  2=ITEM  8=QUESTREWARDED  9=QUESTTAKEN  
+               10=DRUNKEN_STATE  11=ZONEID  13=REPUTATION_RANK  
+               14=SKILL  15=QUEST_COMPLETE  16=LEVEL  18=ACTIVE_EVENT  
+               22=CLASSMASK  23=RACEMASK  28=QUESTSTATE  45=PHASEID  
+Key columns: SourceType, SourceGroup, SourceEntry, ConditionTypeOrReference,  
+             ConditionValue1-3, NegativeCondition (0=require, 1=forbid)  
+  
+## World Database Tables (quest/NPC pipeline)  
+quest_template            — quest row; NOTE: no 'status' column exists  
+quest_template_addon      — PrevQuestID/NextQuestID chain, flags  
+quest_objectives          — objective rows (Type 0=kill,1=item,2=GO,3=area,4=currency)  
+quest_offer_reward        — completion text, emotes  
+quest_request_items       — hand-in text  
+creature_template         — NPC definition (entry = spawn id)  
+creature_template_addon   — auras, mount, bytes  
+creature                  — spawns (id = creature_template.entry, guid = spawn)  
+creature_loot_template    — Entry=entry, Item, Chance (ChanceOrQuestChance in 12.x)  
+reference_loot_template   — chained via creature_loot_template.Reference  
+gameobject_template / gameobject  
+smart_scripts             — see columns/constants above  
+spell_area                — spell gated to zone/map/aura  
+spell_script_names        — spell_id -> ScriptName binding  
+spell_group / spell_proc  — stacking rules, proc flags  
+conditions                — see above  
+gossip_menu / gossip_menu_option — MenuID tree; option action -> script  
+npc_text                  — gossip display text  
+page_text                 — book/page chains via NextPageID  
+points_of_interest        — minimap POIs  
+quest_poi / quest_poi_points — quest map markers  
+creature_text             — SMART_ACTION_TALK lines (GroupID = param1)  
+waypoints                 — waypoint_data for WP_START paths  
+  
+## Auth / Character DB Tables (verify against schema dumps — your indexed repos)  
+battlenet_accounts, account, account_access, account_banned  
+characters, character_queststatus (quest column = quest id;  
+  status is CHARACTER_QUESTSTATUS_* enum, not a plain 'status' field),  
+character_inventory, item_instance, mail, guild, arena_team  
+  
+## DBC / DB2 → C++ store names (grep sXxxStore to find loaders)  
+Spell.dbc→sSpellStore        SpellVisual.dbc→sSpellVisualStore  
+SpellVisualKit.dbc           SpellDuration.dbc→sSpellDurationStore  
+SpellCastTimes.dbc           SpellRange.dbc→sSpellRangeStore  
+Item.db2→sItemStore          ItemSparse.db2→sItemSparseStore  
+ItemEffect.db2               Creature.db2    CreatureDisplayInfo.db2  
+QuestV2.db2                  Map.db2→sMapStore  AreaTable.db2→sAreaTableStore  
+ChrClasses.db2  ChrRaces.db2  Talent.db2  TalentTab.db2  
+SkillLine.db2  SkillLineAbility.db2  
+Loader pattern: LoadDBCStores / LoadDB2Stores in DBCStores.cpp / DB2Stores.cpp  
+Structures: src/server/game/DataStores/DBCStructure.h (+ DB2Structure.h in 12.x)  
+  
+## Opcodes / packet flow (verify names in Opcodes.cpp for 12.1.0 — naming varies)  
+CMSG_* = client→server, SMSG_* = server→client  
+Cast:   CMSG_CAST_SPELL → HandleCastSpellOpcode → Spell::cast → SMSG_SPELL_START/GO  
+Move:   CMSG_MOVE_* → MovementHandler.cpp → MovementInfo::Read  
+Quest:  CMSG_QUEST_GIVER_* (accept/complete/query) → QuestHandler.cpp  
+Gossip: CMSG_GOSSIP_HELLO / CMSG_GOSSIP_SELECT_OPTION → gossip_menu chain  
+Item:   CMSG_USE_ITEM → SpellHandler / Item use  
+Combat: CMSG_ATTACK_SWING → Unit::AttackerStateUpdate  
+Updates: SMSG_UPDATE_OBJECT (spawn/despawn), SMSG_QUEST_UPDATE_*,  
+         SMSG_GOSSIP_MESSAGE, SMSG_MOVE_* (movement broadcast)  
+"Invalid opcode" = struct layout mismatch vs client build — check the  
+packet class in Server/Packets/*Packets.cpp first, then the handler.  
+  
+## Common wiring patterns  
+- Quest credit: smart_scripts action_type=58, action_param1=quest id;  
+  NPC must have source_type=0 row with entryorguid=creature_template.entry  
+- New quest needs: quest_template + quest_objectives (+ quest_poi markers,  
+  creature_queststarter/questender rows or gossip hook, conditions gates)  
+- New NPC needs: creature_template + creature spawn row + (smart_scripts,  
+  gossip, creature_text, loot) + conditions to gate behavior  
+- Spell scripting: C++ script named in spell_script_names, loaded via  
+  AddSC_* registration — a spell with no row and no script does nothing  
+- Loot chain: creature_loot_template.Reference → reference_loot_template  
+  (recursive; check parent chain before adding rows)  
+- Hot reload: .reload smart_scripts / quest_template / creature_template /  
+  conditions — C++ changes still need recompile + restart  
+  
+## In-game test commands  
+.quest complete <id>   .cast <spell_id>   .npc info   .gobject near  
+.reload smart_scripts  .reload quest_template  .reload creature_template  
+.reload conditions     .npc add <entry>    .gm on / .gm off  
+Check server console log after .cast/.quest — spell/condition failures log there.  
+  
+## Common Errors → First Places to Check  
+"Invalid opcode"          → *Packets.cpp struct vs 12.1.0 client layout  
+"Spell X not found"       → sSpellStore entry; DBC load order at startup  
+"Quest credit not firing" → smart_scripts action 58 param1 vs quest id;  
+                            conditions SourceType 31/20 gating it  
+"Creature not spawning"   → creature row, phaseMask/PhaseID, spawnMask  
+"NPC won't gossip/quest"  → gossip_menu chain, creature_template.npcflag,  
+                            conditions SourceType 13/14/20  
+"Quest not available"     → quest_template_addon prereqs, conditions 20,  
+                            character_queststatus prior quest state  
+"Loot never drops"        → ChanceOrQuestChance>0, reference chain complete,  
+                            conditions SourceType 1  
+"No such row in conditions" → missing SourceType/SourceGroup entry
