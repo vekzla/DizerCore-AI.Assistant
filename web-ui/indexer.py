@@ -3,9 +3,11 @@
 # DizerCore AI Assistant  
 # -----------------------------------------------------------------------------  
 # File:    web-ui/indexer.py  
-# Purpose: Build a SQLite FTS5 index of the reference repo. Only indexes the  
-#          current expansion's SQL (12.x) plus base schema plus source code.  
-#          Set INDEX_ALL_SQL=1 to index every SQL file.  
+# Purpose: Build a SQLite FTS5 index of ALL reference repos found under  
+#          /data/reference (the TrinityCore mirror plus any schema-dump  
+#          repos). Indexed paths are stored as "<RepoName>/<relpath>".  
+#          Only indexes the current expansion's SQL (12.x) plus base schema  
+#          plus source code. Set INDEX_ALL_SQL=1 to index every SQL file.  
 # =============================================================================  
   
 import fcntl  
@@ -30,17 +32,23 @@ INDEX_EXTENSIONS = {
 MAX_FILE_SIZE = 5 * 1024 * 1024  
   
   
-def find_reference_repo():  
-    # REFERENCE_DIR itself may be the repo (cloned directly into it)  
+def find_reference_repos():  
+    """Return EVERY git repo under REPO_DIR, sorted by name.  
+  
+    The schema-dump repos the user pushes to Gitea land here as siblings of  
+    the main TrinityCore mirror. Returning only the first one would silently  
+    ignore them.  
+    """  
     if os.path.isdir(os.path.join(REPO_DIR, ".git")):  
-        return REPO_DIR  
+        return [REPO_DIR]  
+    repos = []  
     if not os.path.isdir(REPO_DIR):  
-        return None  
+        return repos  
     for name in sorted(os.listdir(REPO_DIR)):  
         full = os.path.join(REPO_DIR, name)  
         if os.path.isdir(full) and os.path.isdir(os.path.join(full, ".git")):  
-            return full  
-    return None  
+            repos.append(full)  
+    return repos  
   
   
 def should_include_path(rel_path):  
@@ -66,16 +74,22 @@ def should_include_path(rel_path):
         if section == "updates" and len(parts) >= 3:  
             return parts[2] in SQL_INCLUDE_DIRS  
         return False  
+    # Secondary repos (schema dumps etc.) have no src/sql layout — index  
+    # their top-level .sql/.txt/.md files so CREATE TABLE dumps are found.  
+    if top not in {"src", "sql"}:  
+        return True  
     return False  
   
   
 def build_index():  
-    repo = find_reference_repo()  
-    if not repo:  
+    repos = find_reference_repos()  
+    if not repos:  
         print(f"No reference repo found under {REPO_DIR}", file=sys.stderr)  
         sys.exit(1)  
   
-    print(f"Indexing: {repo}")  
+    print(f"Indexing {len(repos)} repo(s):")  
+    for r in repos:  
+        print(f"  - {r}")  
     print(f"Database: {DB_FILE}")  
     if INDEX_ALL_SQL:  
         print("Mode: ALL SQL versions")  
@@ -124,50 +138,56 @@ def build_index():
   
     conn.execute("BEGIN")  
   
-    for root, dirs, files in os.walk(repo):  
-        dirs[:] = [d for d in dirs  
-                   if d not in {".git", "node_modules", "build", "bin"}]  
+    for repo in repos:  
+        repo_name = os.path.basename(repo)  
+        print(f"Walking {repo_name} ...", flush=True)  
   
-        for fname in files:  
-            ext = os.path.splitext(fname)[1].lower()  
-            if ext not in INDEX_EXTENSIONS:  
-                continue  
+        for root, dirs, files in os.walk(repo):  
+            dirs[:] = [d for d in dirs  
+                       if d not in {".git", "node_modules", "build", "bin"}]  
   
-            full = os.path.join(root, fname)  
-            rel = os.path.relpath(full, repo)  
+            for fname in files:  
+                ext = os.path.splitext(fname)[1].lower()  
+                if ext not in INDEX_EXTENSIONS:  
+                    continue  
   
-            if not should_include_path(rel):  
-                skipped_by_path += 1  
-                continue  
+                full = os.path.join(root, fname)  
+                rel = os.path.relpath(full, repo)  
   
-            try:  
-                size = os.path.getsize(full)  
-            except OSError:  
-                continue  
+                if not should_include_path(rel):  
+                    skipped_by_path += 1  
+                    continue  
   
-            if size > MAX_FILE_SIZE:  
-                skipped_by_size += 1  
-                continue  
+                try:  
+                    size = os.path.getsize(full)  
+                except OSError:  
+                    continue  
   
-            try:  
-                with open(full, "r", errors="ignore") as f:  
-                    content = f.read()  
-            except Exception:  
-                continue  
+                if size > MAX_FILE_SIZE:  
+                    skipped_by_size += 1  
+                    continue  
   
-            conn.execute(  
-                "INSERT INTO files (path, content) VALUES (?, ?)",  
-                (rel, content),  
-            )  
-            count += 1  
-            total_bytes += len(content)  
+                try:  
+                    with open(full, "r", errors="ignore") as f:  
+                        content = f.read()  
+                except Exception:  
+                    continue  
   
-            if count % 500 == 0:  
-                elapsed = time.time() - started  
-                rate = count / elapsed if elapsed > 0 else 0  
-                print(f"  {count} files ({total_bytes // (1024*1024)} MB) "  
-                      f"in {elapsed:.1f}s ({rate:.0f} files/s)",  
-                      flush=True)  
+                # Prefix with the repo name so matches show which repo they  
+                # came from and two repos can never produce the same path.  
+                conn.execute(  
+                    "INSERT INTO files (path, content) VALUES (?, ?)",  
+                    (f"{repo_name}/{rel}", content),  
+                )  
+                count += 1  
+                total_bytes += len(content)  
+  
+                if count % 500 == 0:  
+                    elapsed = time.time() - started  
+                    rate = count / elapsed if elapsed > 0 else 0  
+                    print(f"  {count} files ({total_bytes // (1024*1024)} MB) "  
+                          f"in {elapsed:.1f}s ({rate:.0f} files/s)",  
+                          flush=True)  
   
     print()  
     print("Optimizing FTS5 index ...", flush=True)  
@@ -189,12 +209,4 @@ def build_index():
     print(f"Indexed {count} files, {total_bytes // (1024*1024)} MB of text")  
     print(f"Skipped {skipped_by_path} by path filter")  
     print(f"Skipped {skipped_by_size} by size "  
-          f"(>{MAX_FILE_SIZE // (1024*1024)} MB)")  
-    print(f"Index size: {size:.1f} MB")  
-    print(f"Time: {elapsed:.1f}s")  
-  
-    lock_fd.close()  
-  
-  
-if __name__ == "__main__":  
-    build_index()
+          f"(>{MAX_FILE_SIZE // (1024*1024)} MB
