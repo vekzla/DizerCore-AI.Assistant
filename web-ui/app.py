@@ -63,6 +63,10 @@ REPO_SEARCH_CHAR_LIMIT = 6000
 REPO_SEARCH_TIMEOUT = 10  
 REPO_SEARCH_MAX_FILES_PER_KEYWORD = 500  
   
+# Investigation output is multi-section (FILES TO CHECK / WHAT TO VERIFY /  
+# PROMPT FOR NEXT AI) — 256 tokens truncated it mid-block.  
+GENERATE_MAX_TOKENS = 700  
+  
 # Seconds to wait for the index-watcher control API. Was 1s — too short  
 # while the indexer saturates the Pi's CPU, which made the UI report  
 # "watcher: down" even though the service was running.  
@@ -134,60 +138,69 @@ def _mark_ai_idle():
   
   
 # =============================================================================  
-# System prompts  
+# System prompt  
+#  
+# ONE unified persona. The first sentence MUST stay identical to the SYSTEM  
+# constant in training/dizercore-colab.ipynb — the LoRA adapter is trained  
+# on that exact persona, so runtime and training must match.  
+#  
+# _detect_mode() no longer selects a persona; it only picks which domain  
+# hint lines get appended to this shared prompt.  
 # =============================================================================  
   
-SYSTEM_PROMPTS = {  
-    "cpp": """You are a prompt engineer for TrinityCore 12.1.0 Midnight (WoW retail emulation). The user works with C++ source in src/server/game/.  
+SYSTEM_PROMPT = """You are a software engineer building a TrinityCore WoW emulation server. You investigate issues and produce structured prompts listing which files/folders to check and what to verify — SQL or C++ code. You never write the fix itself.  
+  
+The user describes a problem. You respond with an investigation plan, NOT a fix.  
+  
+OUTPUT FORMAT (use exactly these three section headers):  
+  
+FILES TO CHECK:  
+1. <real file path — prefer paths from the matched files below>  
+   - what to look at inside it  
+2. <next file or folder>  
+   - what to look at inside it  
+  
+WHAT TO VERIFY:  
+- <specific check — a SQL query to run, a function behaviour to trace, a schema agreement to confirm>  
+- <next check>  
+  
+PROMPT FOR NEXT AI:  
+<A ready-to-paste paragraph for a follow-up AI. It names the exact file(s), function(s), table(s) and row id(s) discovered above, states what to inspect, and defines what "done" looks like. This is the deliverable — make it self-contained.>  
   
 RULES:  
-- Reference actual TrinityCore file names and class names  
-- If the matched files below show the actual function or method name, USE IT  
-- If you don't see the file in the matches, say "reference the existing implementation" instead of inventing one  
-- Output ONLY the refined prompt. No preamble, no explanations  
-- Structure: WHAT to change, WHICH file/function, WHAT done looks like  
-- Keep under 150 words""",  
+- Name REAL files, tables, columns, functions, opcodes and constants from the matched excerpts. Never invent them  
+- Never write the actual fix, the corrective SQL, or replacement C++ code  
+- If a detail is not in the matches, write "verify against the actual schema/source" instead of guessing  
+- End the PROMPT FOR NEXT AI block with a Success: line stating the observable in-game result"""  
   
-    "sql": """You are a prompt engineer for TrinityCore 12.1.0 Midnight SQL. The user works with the world database: quest_template, quest_poi, quest_poi_points, smart_scripts, creature_template, spell_area, conditions.  
-  
-RULES:  
-- Reference actual table and column names  
-- If the matched SQL files show the real schema, use those exact column names and IDs  
-- Never invent schema — if unsure, say "verify against the actual schema"  
-- Never use a generic "status" column for quests — that column does not exist  
-- The quest data lives under sql/old/12.x/world/. Match the real file paths.  
-- Output ONLY the refined prompt. No explanations, no preamble  
-- Structure: WHICH table, WHICH row (by ID), WHAT values change  
-- Keep under 150 words""",  
-  
-    "smart": """You are a prompt engineer for TrinityCore 12.1.0 SMART AI scripts.  
-  
-RULES:  
-- Reference SMART_ACTION_*, SMART_EVENT_*, SMART_TARGET_* constants  
-- Reference smart_scripts columns: entryorguid, source_type, event_type, action_type, action_param1-6, target_type  
-- If the matched files show actual script constants, use those numbers  
-- Never invent event or action types  
-- Output ONLY the refined prompt. No explanations, no preamble  
-- Keep under 150 words""",  
-  
-    "opcode": """You are a prompt engineer for TrinityCore 12.1.0 opcodes and packet handling.  
-  
-RULES:  
-- Reference actual opcode names (CMSG_*, SMSG_*, MSG_*)  
-- Reference handler files and packet files  
-- If the matched files show the actual handler name, use it  
-- Never invent opcodes — if unsure, say "verify against Opcodes.h for 12.1.0"  
-- Output ONLY the refined prompt. No explanations, no preamble  
-- Keep under 150 words""",  
-  
-    "dbc": """You are a prompt engineer for TrinityCore 12.1.0 client data.  
-  
-RULES:  
-- Reference actual DBC/DB2 file names and loader functions  
-- If the matched files show actual column names, use them  
-- Never invent file structures  
-- Output ONLY the refined prompt. No explanations, no preamble  
-- Keep under 150 words""",  
+# Per-domain rule lines appended to the shared prompt. _detect_mode() picks  
+# ONE of these — the persona and output format never change.  
+DOMAIN_RULES = {  
+    "cpp": (  
+        "- Prefer files under src/server/game/ and name the real "  
+        "Class::method when the matches show one\n"  
+        "- List callers/early-exit paths as things to verify"  
+    ),  
+    "sql": (  
+        "- World DB tables: quest_template, quest_poi, quest_poi_points, "  
+        "smart_scripts, creature_template, spell_area, conditions\n"  
+        "- There is NO generic 'status' column on quests — never suggest one\n"  
+        "- 12.x quest/world data lives under sql/old/12.x/world/ — use real paths"  
+    ),  
+    "smart": (  
+        "- Use SMART_ACTION_*, SMART_EVENT_*, SMART_TARGET_* constants only "  
+        "when shown in the matches\n"  
+        "- smart_scripts columns: entryorguid, source_type, event_type, "  
+        "action_type, action_param1-6, target_type"  
+    ),  
+    "opcode": (  
+        "- Reference real CMSG_*/SMSG_*/MSG_* names and handler files\n"  
+        "- If unsure of an opcode, say \"verify against Opcodes.h for 12.1.0\""  
+    ),  
+    "dbc": (  
+        "- Reference actual DBC/DB2 file names and loader functions\n"  
+        "- Never invent file structures or column layouts"  
+    ),  
 }  
   
   
@@ -210,7 +223,7 @@ def _load_game_data():
   
   
 # =============================================================================  
-# Domain classifier  
+# Domain classifier — selects hint lines only, not a persona  
 # =============================================================================  
   
 def _detect_mode(text):  
@@ -383,9 +396,9 @@ def _search_via_index(query):
         matches.append({"path": path, "snippet": snippet})  
         total_chars += block  
   
-    repo = _find_reference_repo()  
+    repos = _find_reference_repos()  
     return {  
-        "repo": os.path.basename(repo) if repo else "index",  
+        "repo": "/".join(os.path.basename(r) for r in repos) if repos else "index",  
         "matches": matches,  
         "source": "fts5",  
         "keywords": keywords,  
@@ -418,25 +431,34 @@ def _score_file_for_priority(path):
   
   
 def _search_via_ripgrep(query):  
-    repo = _find_reference_repo()  
-    if not repo:  
+    repos = _find_reference_repos()  
+    if not repos:  
         return None  
   
     keywords = _extract_keywords(query)  
     if not keywords:  
         return None  
   
+    # Search every repo under /data/reference (source repo + schema repo)  
     keyword_files = {}  
     for kw in keywords:  
-        files = _ripgrep_files(kw, repo)  
+        files = []  
+        for repo in repos:  
+            for f in _ripgrep_files(kw, repo):  
+                # Prefix with repo basename so paths match the FTS index  
+                files.append(os.path.join(  
+                    os.path.basename(repo),  
+                    os.path.relpath(f, repo)))  
         if not files:  
             continue  
         if len(files) > REPO_SEARCH_MAX_FILES_PER_KEYWORD:  
             continue  
         keyword_files[kw] = files  
   
+    repo_label = "/".join(os.path.basename(r) for r in repos)  
+  
     if not keyword_files:  
-        return {"repo": os.path.basename(repo), "matches": [],  
+        return {"repo": repo_label, "matches": [],  
                 "note": "no informative keywords found", "source": "ripgrep"}  
   
     rarest_kw = min(keyword_files.keys(), key=lambda k: len(keyword_files[k]))  
@@ -459,11 +481,15 @@ def _search_via_ripgrep(query):
   
     matches = []  
     total_chars = 0  
-    for f in candidate_files:  
+    for rel_prefixed in candidate_files:  
+        # rel_prefixed is "<repo>/<rel>" — resolve it back to a real path  
+        repo_name, _, rel = rel_prefixed.partition("/")  
+        repo = os.path.join(REFERENCE_DIR, repo_name)  
+        full = os.path.join(repo, rel)  
         try:  
             ctx = subprocess.run(  
                 ["rg", "-i", "-C", str(REPO_SEARCH_CONTEXT_LINES),  
-                 "--max-count", "2", re.escape(rarest_kw), f],  
+                 "--max-count", "2", re.escape(rarest_kw), full],  
                 capture_output=True, text=True, timeout=REPO_SEARCH_TIMEOUT,  
             )  
         except subprocess.TimeoutExpired:  
@@ -471,37 +497,39 @@ def _search_via_ripgrep(query):
         snippet = ctx.stdout.strip()  
         if not snippet:  
             continue  
-        rel = os.path.relpath(f, repo)  
-        block = len(rel) + len(snippet)  
+        block = len(rel_prefixed) + len(snippet)  
         if total_chars + block > REPO_SEARCH_CHAR_LIMIT:  
             break  
-        matches.append({"path": rel, "snippet": snippet})  
+        matches.append({"path": rel_prefixed, "snippet": snippet})  
         total_chars += block  
   
     return {  
-        "repo": os.path.basename(repo),  
+        "repo": repo_label,  
         "matches": matches,  
         "rarest_keyword": rarest_kw,  
         "source": "ripgrep",  
     }  
   
   
-def _find_reference_repo():  
-    # REFERENCE_DIR itself may be the repo (cloned directly into it)  
+def _find_reference_repos():  
+    """ALL git repos under REFERENCE_DIR (source repo + schema repo)."""  
     if os.path.isdir(os.path.join(REFERENCE_DIR, ".git")):  
-        return REFERENCE_DIR  
-    # Otherwise return the first child directory that is a git repo.  
-    # The old version returned REFERENCE_DIR unconditionally (it is always  
-    # a dir), which made system info show "reference" and pointed  
-    # ripgrep at the parent instead of the actual repo.  
+        return [REFERENCE_DIR]  
+    repos = []  
     try:  
         for name in sorted(os.listdir(REFERENCE_DIR)):  
             p = os.path.join(REFERENCE_DIR, name)  
             if os.path.isdir(p) and os.path.isdir(os.path.join(p, ".git")):  
-                return p  
+                repos.append(p)  
     except OSError:  
         pass  
-    return None  
+    return repos  
+  
+  
+def _find_reference_repo():  
+    """First repo — used only where a single display name is needed."""  
+    repos = _find_reference_repos()  
+    return repos[0] if repos else None  
   
   
 def _search_reference_repo(query):  
@@ -529,16 +557,21 @@ def _format_repo_matches(result):
     lines.append(  
         "\nIMPORTANT: The files above are REAL excerpts from the user's "  
         "reference repo. Use the ACTUAL file paths, table names, column "  
-        "names, and ID numbers from these matches. Do NOT invent file "  
-        "names or column names. If a specific detail isn't in the "  
-        "matches, write \"reference the existing implementation\" "  
-        "instead of guessing."  
+        "names, and ID numbers from these matches in your FILES TO CHECK "  
+        "section. Do NOT invent file names or column names. If a specific "  
+        "detail isn't in the matches, write \"verify against the actual "  
+        "schema/source\" instead of guessing."  
     )  
     return "\n".join(lines)  
   
   
 def _build_system_prompt(mode, query=""):  
-    parts = [SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["cpp"])]  
+    parts = [SYSTEM_PROMPT]  
+  
+    # Domain hint lines — appended to the shared persona, never a replacement  
+    rules = DOMAIN_RULES.get(mode)  
+    if rules:  
+        parts.append(f"DOMAIN HINTS:\n{rules}")  
   
     game_data = _load_game_data()  
     if game_data:  
@@ -607,7 +640,7 @@ def _server_ready():
         return False  
   
   
-def _generate_via_server(prompt, system_prompt, max_tokens=256):  
+def _generate_via_server(prompt, system_prompt, max_tokens=GENERATE_MAX_TOKENS):  
     body = json.dumps({  
         "messages": [  
             {"role": "system", "content": system_prompt},  
@@ -630,7 +663,7 @@ def _generate_via_server(prompt, system_prompt, max_tokens=256):
         return None  
   
   
-def _generate_via_cli(prompt, system_prompt, max_tokens=256):  
+def _generate_via_cli(prompt, system_prompt, max_tokens=GENERATE_MAX_TOKENS):  
     result = subprocess.run(  
         [  
             LLAMA_BIN,  
@@ -775,13 +808,14 @@ def api_search():
   
 @app.route("/api/reference")  
 def api_reference():  
-    repo = _find_reference_repo()  
-    if not repo:  
+    repos = _find_reference_repos()  
+    if not repos:  
         return jsonify({"exists": False})  
     return jsonify({  
         "exists": True,  
-        "path": repo,  
-        "name": os.path.basename(repo),  
+        "path": repos[0],  
+        "name": "/".join(os.path.basename(r) for r in repos),  
+        "repos": [os.path.basename(r) for r in repos],  
     })  
   
   
@@ -1034,7 +1068,7 @@ def start_update():
     if r.returncode != 0:  
         return jsonify({"error": f"launch failed: {r.stderr.strip() or r.stdout.strip()}"}), 500  
     _remote_cache["checked_at"] = 0  
-    return jsonify({"status": "started"})
+    return jsonify({"status": "started"})  
   
   
 @app.route("/api/update/status")  
@@ -1161,8 +1195,9 @@ def _collect_system_info():
         info["model_size"] = None  
   
     try:  
-        repo = _find_reference_repo()  
-        info["reference_repo"] = os.path.basename(repo) if repo else None  
+        repos = _find_reference_repos()  
+        info["reference_repo"] = "/".join(  
+            os.path.basename(r) for r in repos) if repos else None  
     except Exception as e:  
         errors.append(f"reference: {e}")  
         info["reference_repo"] = None  
@@ -1286,7 +1321,7 @@ def _read_throttle():
     raw = out.split("=")[1].strip()  
     try:  
         val = int(raw, 16)  
-    except Exception:  
+    except ValueError:  
         return {"raw": raw, "current": False, "occurred": False}  
     return {"raw": raw, "current": bool(val & 0x7), "occurred": bool(val & 0x70000)}  
   
