@@ -1516,8 +1516,7 @@ def clear_log():
 #  removed; it only ever contained a stale copy of dataset-builder.py)  
 # =============================================================================  
   
-TRAINING_DEPLOY_SCRIPT = os.path.join(  
-    os.path.dirname(__file__), "training-deploy.sh")  
+TRAINING_DEPLOY_SCRIPT = "/usr/local/sbin/dizercore-training-deploy"
 DATASET_BUILDER = os.path.join(TRAINING_DIR, "dataset-builder.py")  
   
 _build_state = {"building": False, "log": "", "exit_code": None}  
