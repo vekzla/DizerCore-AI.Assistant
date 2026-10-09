@@ -116,25 +116,25 @@ select_model() {
     return 0  
   fi  
   
-  # ---------- interactive: show menu ----------  
-  echo ""  
-  echo -e "  ${BOLD}Choose the model to install${NC}"  
-  echo -e "  ${DIM}Larger models give better output but are slower on the Pi.${NC}"  
-  echo ""  
-  
-  local keys=()  
-  local i=1  
-  for entry in "${MODEL_REGISTRY[@]}"; do  
-    IFS='|' read -r key name size speed file url <<< "$entry"  
-    keys+=("$key")  
-  
-    local tags=""  
-    [[ "$key" == "$MODEL_DEFAULT_KEY" ]] && tags="${tags}  ${GREEN}★ recommended${NC}"  
-    [[ "$key" == "$saved_key" ]] && tags="${tags}  ${DIM}(currently installed)${NC}"  
-  
-    printf "    ${GREEN}%d)${NC}  %-26s  %-8s  %-11s%s\n" "$i" "$name" "$size" "$speed" "$tags"  
-    i=$((i + 1))  
-  done  
+  # ---------- interactive: show menu ----------    
+  echo ""    
+  echo -e "  ${BOLD}Choose the model to install${NC}"    
+  echo -e "  ${DIM}Larger models give better output but are slower on the Pi.${NC}"    
+  echo ""    
+    
+  local keys=()    
+  local i=1    
+  for entry in "${MODEL_REGISTRY[@]}"; do    
+    IFS='|' read -r key name size speed file url <<< "$entry"    
+    keys+=("$key")    
+    
+    local tags=""    
+    [[ "$key" == "$MODEL_DEFAULT_KEY" ]] && tags="${tags}  ${GREEN}★ recommended${NC}"    
+    [[ "$key" == "$saved_key" ]] && tags="${tags}  ${DIM}(currently installed)${NC}"    
+    
+    printf "    ${GREEN}%d)${NC}  %-26s  %-8s  %-11s%b\n" "$i" "$name" "$size" "$speed" "$tags"  
+    i=$((i + 1))    
+  done
   
   echo ""  
   
