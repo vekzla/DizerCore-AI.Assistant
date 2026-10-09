@@ -2,16 +2,21 @@
 # =============================================================================  
 # DizerCore AI Assistant  
 # -----------------------------------------------------------------------------  
-# File:    training/dataset-builder.py  
-# Purpose: Walk the reference repo and produce training examples that teach  
-#          the Instruct model how the codebase is structured — file roles,  
+# File:    training/dataset-builder.py
+# Purpose: Walk ALL reference repos under /data/reference (TrinityCore mirror  
+#          + per-table schema dump repos) and produce training examples that  
+#          teach the model how the codebase is structured — file roles,  
 #          function inventories, SQL table usage, and investigation prompts.  
 #  
-#          Tables are NOT hardcoded: a schema pass reads the repo's own SQL  
+#          Tables are NOT hardcoded: a schema pass reads each repo's own SQL  
 #          files (CREATE TABLE / INSERT INTO) to discover the real table set,  
 #          which IDs exist in which tables, and which files reference each  
-#          table. Investigation examples can therefore name real files and  
+#          table. Investigation examples therefore name real files and  
 #          sibling tables and emit a ready-to-use prompt for a follow-up AI.  
+#  
+#          Paths written into examples are "<RepoName>/<relpath>" — identical  
+#          to what the FTS5 index stores, so runtime matches line up with  
+#          what the adapter was trained on.  
 #  
 # Output:  /data/training/dizercore-dataset.jsonl  
 #          Line 1 is a metadata record carrying the base model repo so the  
@@ -37,35 +42,31 @@ MAX_TABLE_EXAMPLES = 500
 MAX_IDS_PER_TABLE = 40  
 MAX_FILES_PER_TABLE = 20  
   
+# Investigation examples: up to this many phrasing variants emitted per file  
+# during the walk, then upsampled until they reach this fraction of the  
+# dataset (they're what teaches the runtime output format).  
+INV_VARIANTS_PER_FILE = 2  
+INV_TARGET_FRACTION = 0.15  
+INV_POOL_CAP = 6000  
+  
 SKIP_DIRS = {".git", "dep", "contrib", "doc", "docs", "tests", "cmake",  
              "build", "bin", "node_modules"}  
   
-# Identifiers that follow a SQL keyword: FROM x, INSERT INTO x, UPDATE x,  
-# JOIN x, DELETE FROM x, ALTER TABLE x, etc.  
 TABLE_REF_RE = re.compile(  
     r"\b(?:from|into|update|join|table)\s+`?(\w+)`?",  
     re.IGNORECASE,  
 )  
   
-# Table declarations in schema/base files: CREATE TABLE `name` / IF NOT EXISTS  
 CREATE_TABLE_RE = re.compile(  
     r"\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?`?(\w+)`?",  
     re.IGNORECASE,  
 )  
   
-# INSERT INTO `table` ... VALUES (12345, -> links real row IDs to tables  
 INSERT_ID_RE = re.compile(  
     r"\binsert\s+into\s+`?(\w+)`?[^;]*?\bvalues\s*\(\s*(\d{1,10})\s*,",  
     re.IGNORECASE | re.DOTALL,  
 )  
   
-# Matches SQL keyword-embedded identifiers inside prose/code  
-SQL_KEYWORD_BEFORE_RE = re.compile(  
-    r"\b(?:from|into|update|join|table|delete\s+from)\s+`?(\w+)`?",  
-    re.IGNORECASE,  
-)  
-  
-# Common C++ types in TrinityCore so we can extract meaningful signatures  
 TC_CLASSES = [  
     "Player", "Unit", "Creature", "Spell", "SpellInfo", "SpellMgr",  
     "WorldSession", "World", "ObjectMgr", "Map", "MapManager", "InstanceScript",  
@@ -73,17 +74,11 @@ TC_CLASSES = [
     "Item", "GameObject", "TempSummon", "Pet", "Battleground",  
 ]  
   
-# Names that look like tables after SQL keywords but are keywords/functions —  
-# kept small; the real safety net is that only discovered schema names match.  
 SQL_STOP_WORDS = {  
     "select", "set", "where", "values", "dual", "table", "tables",  
     "if", "not", "exists", "temporary", "like", "as", "on", "using",  
 }  
   
-# Maps the installed-model key (written to /data/.dizercore-model by the  
-# installer when the user picks a model) to the HuggingFace repo the  
-# notebook should train. Keeps training in the same family as whatever  
-# llama-server is running.  
 MODEL_KEY_FILE = "/data/.dizercore-model"  
 BASE_MAP = {  
     "0.5b":      "Qwen/Qwen2.5-Coder-0.5B-Instruct",  
@@ -95,14 +90,51 @@ BASE_MAP = {
 }  
 DEFAULT_BASE = "Qwen/Qwen2.5-1.5B-Instruct"  
   
-# Populated by discover_schema() before the example walk.  
-KNOWN_TABLES = set()          # every real table name found in the repo  
-TABLE_IDS = defaultdict(set)  # table -> set of real row ids seen in INSERTs  
-TABLE_FILES = defaultdict(set)  # table -> set of rel paths that touch it  
+KNOWN_TABLES = set()  
+TABLE_IDS = defaultdict(set)  
+TABLE_FILES = defaultdict(set)  
+  
+# ---------------------------------------------------------------------------  
+# Varied problem phrasings — one formulaic template taught the model to key  
+# off a fixed string instead of real user language. variant selection is  
+# hash-stable so a rebuild produces deterministic output.  
+# ---------------------------------------------------------------------------  
+  
+PROBLEM_SQL_TEMPLATES = [  
+    "{table} entry {id} is not behaving as expected (quest/item/spell not working).",  
+    "Players report the content tied to {table} entry {id} is broken.",  
+    "After the latest update, {table} row {id} stopped working.",  
+    "{table} entry {id}: worked on the old core, broken now — regression?",  
+    "Something is wrong with {table} entry {id}; in-game behaviour is off.",  
+    "Need to troubleshoot {table} entry {id} — nothing happens when it should.",  
+    "Quest/NPC/item from {table} (entry {id}) does nothing when triggered.",  
+    "Investigate why {table} entry {id} does not work in-game.",  
+]  
+  
+PROBLEM_SQL_CONTENT_TEMPLATES = [  
+    "I want to add a new quest/NPC/item using {table} — what has to be wired up?",  
+    "New content task: create an entry in {table} and make it work in-game.",  
+    "Walk me through adding a row to {table} so the content actually functions.",  
+]  
+  
+PROBLEM_CPP_TEMPLATES = [  
+    "{cls}::{method} in {rel} is not behaving correctly.",  
+    "Regression: {cls}::{method} ({rel}) used to work, now it misbehaves.",  
+    "Bug report: triggering {cls}::{method} produces wrong results.",  
+    "{cls}::{method} in {rel} returns early / does nothing in some cases.",  
+    "Crash or fault suspected somewhere around {cls}::{method} in {rel}.",  
+    "Troubleshoot {cls}::{method} ({rel}) — the in-game effect is missing.",  
+    "{cls}::{method} in {rel} silently fails under certain conditions.",  
+    "Figure out why {cls}::{method} ({rel}) is not being reached.",  
+]  
+  
+  
+def _pick(templates, *keys):  
+    h = hashlib.md5("|".join(str(k) for k in keys).encode()).hexdigest()  
+    return templates[int(h, 16) % len(templates)]  
   
   
 def installed_base_model():  
-    """Return the HF repo for the model the user installed, or the default."""  
     try:  
         with open(MODEL_KEY_FILE) as f:  
             key = f.read().strip()  
@@ -111,22 +143,32 @@ def installed_base_model():
     return BASE_MAP.get(key, DEFAULT_BASE), key or "(none)"  
   
   
-def find_reference_repo():  
+def find_reference_repos():  
+    """Every git repo under REFERENCE_DIR — mirrors indexer.py so the schema  
+    dump repo contributes tables and examples instead of being ignored."""  
+    if os.path.isdir(os.path.join(REFERENCE_DIR, ".git")):  
+        return [REFERENCE_DIR]  
+    repos = []  
     if not os.path.isdir(REFERENCE_DIR):  
-        return None  
+        return repos  
     for name in sorted(os.listdir(REFERENCE_DIR)):  
         full = os.path.join(REFERENCE_DIR, name)  
         if os.path.isdir(full) and os.path.isdir(os.path.join(full, ".git")):  
-            return full  
-    return None  
+            repos.append(full)  
+    return repos  
+  
+  
+def repo_rel(repo, rel):  
+    """Prefix a repo-relative path with the repo basename — matches what the  
+    indexer stores in the FTS5 path column."""  
+    return f"{os.path.basename(repo)}/{rel}"  
   
   
 # =============================================================================  
-# Schema discovery — the repo tells us its own tables  
+# Schema discovery — the repos tell us their own tables  
 # =============================================================================  
   
 def iter_repo_files(repo, exts=None):  
-    """Yield (full_path, rel_path) for every includable file in the repo."""  
     for root, dirs, files in os.walk(repo):  
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]  
         for fname in files:  
@@ -151,19 +193,15 @@ def read_file(full):
   
   
 def discover_schema(repo):  
-    """First pass: learn the repo's real tables, row ids, and file map.  
-  
-    Sources of truth, in order of reliability:  
-      1. CREATE TABLE statements in schema/base .sql files (authoritative)  
-      2. INSERT INTO `table` ... VALUES (id, ... in any .sql (also gives ids)  
-      3. SQL-keyword references in any source file (fills TABLE_FILES)  
-    """  
-    print("Pass 1: discovering schema ...", flush=True)  
+    """First pass over ONE repo: learn its tables, row ids, and file map."""  
+    repo_name = os.path.basename(repo)  
+    print(f"Pass 1 ({repo_name}): discovering schema ...", flush=True)  
   
     for full, rel in iter_repo_files(repo, exts={".sql"}):  
         content = read_file(full)  
         if content is None:  
             continue  
+        rel_prefixed = repo_rel(repo, rel)  
         for m in CREATE_TABLE_RE.finditer(content):  
             KNOWN_TABLES.add(m.group(1).lower())  
         for m in INSERT_ID_RE.finditer(content):  
@@ -172,9 +210,8 @@ def discover_schema(repo):
             if len(TABLE_IDS[table]) < MAX_IDS_PER_TABLE:  
                 TABLE_IDS[table].add(m.group(2))  
             if len(TABLE_FILES[table]) < MAX_FILES_PER_TABLE:  
-                TABLE_FILES[table].add(rel)  
+                TABLE_FILES[table].add(rel_prefixed)  
   
-    # Second sweep: which source files reference which (discovered) tables.  
     for full, rel in iter_repo_files(repo):  
         if rel.endswith(".sql"):  
             continue  
@@ -185,10 +222,8 @@ def discover_schema(repo):
             name = m.group(1).lower()  
             if name in KNOWN_TABLES and \  
                     len(TABLE_FILES[name]) < MAX_FILES_PER_TABLE:  
-                TABLE_FILES[name].add(rel)  
+                TABLE_FILES[name].add(repo_rel(repo, rel))  
   
-    # Fallback: if the repo has no schema files at all, accept any name that  
-    # appears after a SQL keyword in .sql files (weaker, but better than none).  
     if not KNOWN_TABLES:  
         for full, rel in iter_repo_files(repo, exts={".sql"}):  
             content = read_file(full)  
@@ -199,17 +234,8 @@ def discover_schema(repo):
                 if name not in SQL_STOP_WORDS:  
                     KNOWN_TABLES.add(name)  
   
-    print(f"  discovered {len(KNOWN_TABLES)} tables, "  
-          f"{sum(len(v) for v in TABLE_IDS.values())} known row ids",  
-          flush=True)  
-  
   
 def sibling_tables(table, limit=6):  
-    """Tables sharing the first '_' segment — quest_template -> quest_* etc.  
-  
-    This is what lets an investigation example point at the addon/objective/  
-    conditions tables without any of them being hardcoded.  
-    """  
     if "_" not in table:  
         return []  
     prefix = table.split("_", 1)[0] + "_"  
@@ -223,7 +249,6 @@ def sibling_tables(table, limit=6):
 # =============================================================================  
   
 def extract_functions(content):  
-    """Return a list of (class_name, method_name, signature, body, line_start)."""  
     pattern = re.compile(  
         r"^([A-Za-z_][A-Za-z0-9_:<>\*&,\s]+?)\s+"  
         r"([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_~][A-Za-z0-9_]*)\s*"  
@@ -255,7 +280,6 @@ def extract_functions(content):
   
   
 def find_called_functions(body):  
-    """Rough heuristic — extract identifiers followed by '(' inside a body."""  
     calls = set()  
     for m in re.finditer(r"\b([A-Z][A-Za-z0-9_]+)::([A-Za-z_][A-Za-z0-9_]*)\s*\(", body):  
         calls.add(f"{m.group(1)}::{m.group(2)}")  
@@ -270,16 +294,10 @@ def find_called_functions(body):
   
   
 def find_opcodes(text):  
-    """Extract CMSG_*, SMSG_*, MSG_* identifiers."""  
     return sorted(set(re.findall(r"\b(?:CMSG|SMSG|MSG)_[A-Z0-9_]+\b", text)))  
   
   
 def find_tables(text):  
-    """Return which repo tables a file references.  
-  
-    Matches only names discovered in the schema pass, and only when a SQL  
-    keyword precedes them — prose mentions can't false-positive.  
-    """  
     found = set()  
     for m in TABLE_REF_RE.finditer(text):  
         name = m.group(1).lower()  
@@ -289,7 +307,6 @@ def find_tables(text):
   
   
 def find_related_ids(text):  
-    """Look for spawn/quest/spell IDs that appear in the file."""  
     ids = set()  
     for m in re.finditer(r"\b(?:ID|Id|id|entry|Entry)\s*[=:]\s*(\d{3,8})\b", text):  
         ids.add(m.group(1))  
@@ -307,12 +324,11 @@ def make_example(instruction, output):
   
   
 # =============================================================================  
-# Example generators — one per category  
+# Example generators  
 # =============================================================================  
   
 def example_file_role(rel_path, content, category, fns=None, tables=None,  
                       opcodes=None):  
-    """Whole-file role description."""  
     if tables is None:  
         tables = find_tables(content)  
     if fns is None:  
@@ -352,7 +368,6 @@ def example_file_role(rel_path, content, category, fns=None, tables=None,
   
   
 def example_function(cls, method, sig, body, rel_path, line_num):  
-    """Per-function inventory with call sites and the actual body."""  
     calls = find_called_functions(body)  
     tables = find_tables(body)  
     opcodes = find_opcodes(body)  
@@ -388,7 +403,6 @@ def example_function(cls, method, sig, body, rel_path, line_num):
   
   
 def example_table_usage(table, snippets, source_file):  
-    """SQL table usage with example rows."""  
     combined = "\n".join(snippets)  
     return make_example(  
         f"Show example SQL for the {table} table from {source_file}.",  
@@ -397,12 +411,7 @@ def example_table_usage(table, snippets, source_file):
   
   
 # =============================================================================  
-# Investigation examples — teach the model to hunt a bug end-to-end  
-#  
-# Given "quest X is not completing", the answer names the real files that  
-# touch the data, the sibling tables that must agree, the exact SQL to run,  
-# and finishes with a PROMPT FOR NEXT AI block the user can paste into any  
-# other model to produce the actual fix.  
+# Investigation examples — FILES TO CHECK / WHAT TO VERIFY / PROMPT FOR NEXT AI  
 # =============================================================================  
   
 def _other_files_for(table, exclude, limit=3):  
@@ -410,8 +419,7 @@ def _other_files_for(table, exclude, limit=3):
     return others[:limit]  
   
   
-def example_sql_investigation(rel_path, content, table):  
-    """Problem framed around a real table + real row id from the file."""  
+def example_sql_investigation(rel_path, content, table, variant=0):  
     ids = sorted(TABLE_IDS.get(table, ())) or find_related_ids(content)  
     sample_id = ids[0] if ids else "<id>"  
     sibs = sibling_tables(table)  
@@ -445,8 +453,18 @@ def example_sql_investigation(rel_path, content, table):
         f"Success: the content tied to {sample_id} behaves correctly in-game."  
     )  
   
-    problem = (f"{table} entry {sample_id} is not behaving as expected "  
-               f"(e.g. quest/item/spell not working).")  
+    # variant 0-2: broken-content phrasings; variant 3+: new-content phrasing  
+    if variant < 3:  
+        problem = PROBLEM_SQL_TEMPLATES[  
+            (int(hashlib.md5(f"{rel_path}|{table}|{variant}".encode()).hexdigest(), 16))  
+            % len(PROBLEM_SQL_TEMPLATES)  
+        ].format(table=table, id=sample_id, rel=rel_path)  
+    else:  
+        problem = PROBLEM_SQL_CONTENT_TEMPLATES[  
+            (int(hashlib.md5(f"{rel_path}|{table}|{variant}".encode()).hexdigest(), 16))  
+            % len(PROBLEM_SQL_CONTENT_TEMPLATES)  
+        ].format(table=table, id=sample_id, rel=rel_path)  
+  
     response = (  
         f"FILES TO CHECK:\n{files_block}\n"  
         f"WHAT TO VERIFY:\n" + "\n".join(verify) + "\n\n"  
@@ -455,9 +473,8 @@ def example_sql_investigation(rel_path, content, table):
     return make_example(problem, response)  
   
   
-def example_cpp_investigation(rel_path, fns, opcodes):  
-    """Problem framed around a real function in the file."""  
-    cls, method, sig, body, ln = fns[0]  
+def example_cpp_investigation(rel_path, fns, opcodes, variant=0):  
+    cls, method, sig, body, ln = fns[variant % len(fns)]  
     calls = find_called_functions(body)  
     header_guess = os.path.splitext(os.path.basename(rel_path))[0] + ".h"  
   
@@ -484,13 +501,15 @@ def example_cpp_investigation(rel_path, fns, opcodes):
         f"Success: the function produces the expected behaviour\n"  
         f"Test: trigger the in-game condition that invokes this function"  
     )  
-    problem = f"{cls}::{method} in {rel_path} is not behaving correctly."  
+    problem = PROBLEM_CPP_TEMPLATES[  
+        (int(hashlib.md5(f"{rel_path}|{cls}|{method}|{variant}".encode()).hexdigest(), 16))  
+        % len(PROBLEM_CPP_TEMPLATES)  
+    ].format(cls=cls, method=method, rel=rel_path)  
     return make_example(problem, response)  
   
   
 def example_problem_investigation(rel_path, content, category, fns=None,  
-                                  tables=None, opcodes=None):  
-    """Dispatch to the SQL or C++ investigation generator."""  
+                                  tables=None, opcodes=None, variant=0):  
     if tables is None:  
         tables = find_tables(content)  
     if opcodes is None:  
@@ -499,9 +518,10 @@ def example_problem_investigation(rel_path, content, category, fns=None,
         fns = extract_functions(content) if category == "cpp" else []  
   
     if category == "sql" and tables:  
-        return example_sql_investigation(rel_path, content, tables[0])  
+        table = tables[variant % len(tables)]  
+        return example_sql_investigation(rel_path, content, table, variant)  
     if category == "cpp" and fns:  
-        return example_cpp_investigation(rel_path, fns, opcodes)  
+        return example_cpp_investigation(rel_path, fns, opcodes, variant)  
     return None  
   
   
@@ -517,98 +537,129 @@ def category_for(ext):
   
   
 def build():  
-    repo = find_reference_repo()  
-    if not repo:  
+    repos = find_reference_repos()  
+    if not repos:  
         print(f"No reference repo under {REFERENCE_DIR}", file=sys.stderr, flush=True)  
         sys.exit(1)  
   
     base_repo, model_key = installed_base_model()  
-    print(f"Building dataset from: {repo}", flush=True)  
+    print(f"Building dataset from {len(repos)} repo(s):", flush=True)  
+    for r in repos:  
+        print(f"  - {r}", flush=True)  
     print(f"Output: {OUTPUT_FILE}", flush=True)  
     print(f"Base model tag: {base_repo} (install key '{model_key}')", flush=True)  
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)  
   
-    discover_schema(repo)  
+    for repo in repos:  
+        discover_schema(repo)  
+    print(f"  discovered {len(KNOWN_TABLES)} tables, "  
+          f"{sum(len(v) for v in TABLE_IDS.values())} known row ids",  
+          flush=True)  
   
     count = 0  
     by_cat = {}  
     last_reported = 0  
     table_examples = 0  
     seen_table_fps = set()  
+    inv_pool = []  # (rel_prefixed, content, cat, fns, tables, opcodes)  
+  
+    def emit(ex, cat):  
+        nonlocal count  
+        out.write(json.dumps(ex) + "\n")  
+        count += 1  
+        by_cat[cat] = by_cat.get(cat, 0) + 1  
   
     with open(OUTPUT_FILE, "w") as out:  
-        # Line 1: metadata record. The notebook reads base_model from it and  
-        # filters it out of training examples.  
         meta = {"_meta": True, "base_model": base_repo, "install_key": model_key}  
         out.write(json.dumps(meta) + "\n")  
   
         print("Pass 2: generating examples ...", flush=True)  
-        for full, rel in iter_repo_files(repo):  
-            content = read_file(full)  
-            if content is None:  
-                continue  
+        for repo in repos:  
+            for full, rel in iter_repo_files(repo):  
+                content = read_file(full)  
+                if content is None:  
+                    continue  
   
-            cat = category_for(os.path.splitext(full)[1].lower())  
-            fns = extract_functions(content) if cat in ("cpp", "header") else []  
-            tables = find_tables(content)  
-            opcodes = find_opcodes(content)  
-            size = len(content.encode("utf-8", "ignore"))  
+                rel_prefixed = repo_rel(repo, rel)  
+                cat = category_for(os.path.splitext(full)[1].lower())  
+                fns = extract_functions(content) if cat in ("cpp", "header") else []  
+                tables = find_tables(content)  
+                opcodes = find_opcodes(content)  
+                size = len(content.encode("utf-8", "ignore"))  
   
-            # --- Example 1: file role (small files) ---  
-            if size <= MAX_WHOLE_FILE_BYTES:  
-                ex = example_file_role(rel, content, cat,  
-                                       fns=fns, tables=tables, opcodes=opcodes)  
-                out.write(json.dumps(ex) + "\n")  
-                count += 1  
-                by_cat["file_role"] = by_cat.get("file_role", 0) + 1  
+                if size <= MAX_WHOLE_FILE_BYTES:  
+                    emit(example_file_role(rel_prefixed, content, cat,  
+                                           fns=fns, tables=tables,  
+                                           opcodes=opcodes),  
+                         "file_role")  
   
-            # --- Example 2: per-function inventory (C++ files only) ---  
-            if cat in ("cpp", "header"):  
-                for cls, method, sig, body, ln in fns[:6]:  
-                    ex = example_function(cls, method, sig, body, rel, ln)  
-                    out.write(json.dumps(ex) + "\n")  
-                    count += 1  
-                    by_cat["function"] = by_cat.get("function", 0) + 1  
+                if cat in ("cpp", "header"):  
+                    for cls, method, sig, body, ln in fns[:6]:  
+                        emit(example_function(cls, method, sig, body,  
+                                              rel_prefixed, ln),  
+                             "function")  
   
-            # --- Example 3: table usage (SQL files, deduped + capped) ---  
-            if cat == "sql" and table_examples < MAX_TABLE_EXAMPLES:  
-                for table in tables[:4]:  
-                    pat = re.compile(  
-                        rf"^.*?\b{re.escape(table)}\b.*?;",  
-                        re.MULTILINE | re.IGNORECASE,  
-                    )  
-                    matches = pat.findall(content)[:3]  
-                    if not matches:  
-                        continue  
-                    fp = hashlib.md5(  
-                        (table + "|" + matches[0]).encode()  
-                    ).hexdigest()  
-                    if fp in seen_table_fps:  
-                        continue  
-                    seen_table_fps.add(fp)  
-                    ex = example_table_usage(table, matches, rel)  
-                    out.write(json.dumps(ex) + "\n")  
-                    count += 1  
-                    table_examples += 1  
-                    by_cat["table"] = by_cat.get("table", 0) + 1  
+                if cat == "sql" and table_examples < MAX_TABLE_EXAMPLES:  
+                    for table in tables[:4]:  
+                        pat = re.compile(  
+                            rf"^.*?\b{re.escape(table)}\b.*?;",  
+                            re.MULTILINE | re.IGNORECASE,  
+                        )  
+                        matches = pat.findall(content)[:3]  
+                        if not matches:  
+                            continue  
+                        fp = hashlib.md5(  
+                            (table + "|" + matches[0]).encode()  
+                        ).hexdigest()  
+                        if fp in seen_table_fps:  
+                            continue  
+                        seen_table_fps.add(fp)  
+                        emit(example_table_usage(table, matches, rel_prefixed),  
+                             "table")  
+                        table_examples += 1  
   
-            # --- Example 4: investigation (1 per file) ---  
-            inv = example_problem_investigation(rel, content, cat,  
-                                              fns=fns, tables=tables,  
-                                              opcodes=opcodes)  
-            if inv:  
-                out.write(json.dumps(inv) + "\n")  
-                count += 1  
-                by_cat["investigation"] = by_cat.get("investigation", 0) + 1  
+                # Investigation: up to INV_VARIANTS_PER_FILE phrasing variants  
+                # per eligible file — the output-format examples matter most.  
+                eligible = (cat == "sql" and tables) or (cat == "cpp" and fns)  
+                if eligible:  
+                    for v in range(INV_VARIANTS_PER_FILE):  
+                        inv = example_problem_investigation(  
+                            rel_prefixed, content, cat, fns=fns,  
+                            tables=tables, opcodes=opcodes, variant=v)  
+                        if inv:  
+                            emit(inv, "investigation")  
+                    if len(inv_pool) < INV_POOL_CAP:  
+                        inv_pool.append(  
+                            (rel_prefixed, content, cat, fns, tables, opcodes))  
   
-            if count - last_reported >= 1000:  
-                last_reported = count  
-                print(f"  {count} examples so far ...", flush=True)  
+                if count - last_reported >= 1000:  
+                    last_reported = count  
+                    print(f"  {count} examples so far ...", flush=True)  
+  
+        # --- Upsample investigation until it reaches the target fraction ---  
+        inv_n = by_cat.get("investigation", 0)  
+        target = int(count * INV_TARGET_FRACTION)  
+        vround = INV_VARIANTS_PER_FILE  
+        while inv_n < target and inv_pool and vround < 12:  
+            print(f"Upsampling investigation (variant round {vround}, "  
+                  f"{inv_n}/{target}) ...", flush=True)  
+            for rel_p, content, cat, fns, tables, opcodes in inv_pool:  
+                if inv_n >= target:  
+                    break  
+                inv = example_problem_investigation(  
+                    rel_p, content, cat, fns=fns, tables=tables,  
+                    opcodes=opcodes, variant=vround)  
+                if inv:  
+                    emit(inv, "investigation")  
+                    inv_n += 1  
+                    target = int(count * INV_TARGET_FRACTION)  
+            vround += 1  
   
     print(flush=True)  
     print(f"Total examples: {count}", flush=True)  
     for cat, n in sorted(by_cat.items(), key=lambda x: -x[1]):  
-        print(f"  {cat}: {n}", flush=True)  
+        pct = 100.0 * n / count if count else 0  
+        print(f"  {cat}: {n} ({pct:.1f}%)", flush=True)  
     print(f"Tables discovered: {len(KNOWN_TABLES)}", flush=True)  
     print(f"Base model: {base_repo}", flush=True)  
     print(f"Written to: {OUTPUT_FILE}", flush=True)  
