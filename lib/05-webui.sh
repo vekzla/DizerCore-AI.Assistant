@@ -92,10 +92,13 @@ RestartSec=10
 WantedBy=multi-user.target  
 EOF  
   
-  # ---------- sudoers rule ----------  
+  # ---------- sudoers rules ----------  
+  # Deploy helper lives in root-owned /usr/local/sbin (H2). 10-training.sh  
+  # writes an identical block; keep both in sync.  
   cat > /etc/sudoers.d/dizercore-update <<EOF  
 ${REAL_USER} ALL=(ALL) NOPASSWD: /bin/bash ${SRC_DIR}/install.sh  
 ${REAL_USER} ALL=(ALL) NOPASSWD: ${SRC_DIR}/install.sh  
+${REAL_USER} ALL=(ALL) NOPASSWD: /usr/local/sbin/dizercore-training-deploy  
 EOF  
   chmod 440 /etc/sudoers.d/dizercore-update  
   
