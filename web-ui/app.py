@@ -1463,7 +1463,7 @@ def clear_log():
             f.write("")  
         return jsonify({"status": "cleared"})  
     except PermissionError:  
-        return jsonify({"error": "Permission denied. Run: sudo chown tadashi /var/log/dizercore-install.log"}), 403  
+        return jsonify({"error": "Permission denied. Run: sudo chown $USER /var/log/dizercore-install.log"}), 403
     except Exception as e:  
         return jsonify({"error": str(e)}), 500  
   
