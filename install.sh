@@ -42,8 +42,9 @@ fi
 # ---------- self-detach when launched by the Web UI updater ----------  
 # Runs install.sh inside a detached systemd unit so it survives the  
 # prompt-gateway restart that happens at step 6.  
-if [[ "${DIZERCORE_UPDATE:-0}" == "1" && -z "${DIZERCORE_UPDATE_UNIT:-}" ]]; then  
-  exec systemd-run --unit=dizercore-update --description="DizerCore self-update" --collect /bin/bash -c "cd /data/dizercore-src && git config --system --add safe.directory /data/dizercore-src && sudo -u tadashi git fetch origin main && sudo -u tadashi git reset --hard origin/main && DIZERCORE_UPDATE_UNIT=1 DIZERCORE_NON_INTERACTIVE=1 bash install.sh >> /var/log/dizercore-update.log 2>&1"  
+if [[ "${DIZERCORE_UPDATE:-0}" == "1" && -z "${DIZERCORE_UPDATE_UNIT:-}" ]]; then    
+  UPDATE_USER="${SUDO_USER:-$(stat -c %U /data/dizercore-src 2>/dev/null || echo pi)}"  
+  exec systemd-run --unit=dizercore-update --description="DizerCore self-update" --collect /bin/bash -c "cd /data/dizercore-src && git config --system --add safe.directory /data/dizercore-src && sudo -u ${UPDATE_USER} git fetch origin main && sudo -u ${UPDATE_USER} git reset --hard origin/main && DIZERCORE_UPDATE_UNIT=1 DIZERCORE_NON_INTERACTIVE=1 bash install.sh >> /var/log/dizercore-update.log 2>&1"    
 fi
 
 # ---------- bootstrap clone if running from a pipe ----------
@@ -103,7 +104,7 @@ source lib/07-readme.sh
 source lib/08-reference-repo.sh
 source lib/09-llama-server.sh
 source lib/11-training.sh
-source "${PWD}/uninstall.sh"
+source "${PWD}/uninstall.sh"  # provides perform_uninstall_installer() for the NVMe wipe step
 
 # ---------- warn if not in tmux and stdin is piped ----------
 if [[ -z "${TMUX:-}" && ! -t 0 ]]; then
