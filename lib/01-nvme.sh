@@ -41,6 +41,8 @@ install_nvme() {
       if ! mountpoint -q "$DATA_MOUNT"; then  
         mount -a 2>/dev/null || mount "${NVME_DEV}p1" "$DATA_MOUNT"  
       fi  
+      # M6: never write to the SD card's /data directory  
+      mountpoint -q "$DATA_MOUNT" || err "${DATA_MOUNT} failed to mount — aborting to avoid writing to SD card"  
     else  
       info "Prior DizerCore installation detected on ${DATA_MOUNT}"  
       echo ""  
@@ -69,6 +71,8 @@ install_nvme() {
           log "Mounting existing ${DATA_MOUNT} ..."  
           mount -a 2>/dev/null || mount "${NVME_DEV}p1" "$DATA_MOUNT"  
         fi  
+        # M6: never write to the SD card's /data directory  
+        mountpoint -q "$DATA_MOUNT" || err "${DATA_MOUNT} failed to mount — aborting to avoid writing to SD card"  
         info "Existing installation preserved"  
       fi  
     fi  
@@ -126,7 +130,7 @@ install_nvme() {
   
 wipe_nvme() {  
   log "Stopping services that may be using ${DATA_MOUNT} ..."  
-  systemctl stop prompt-gateway 2>/dev/null || true  
+  systemctl stop prompt-gateway index-watcher llama-server 2>/dev/null || true  
   systemctl stop docker docker.socket containerd 2>/dev/null || true  
   docker ps -q 2>/dev/null | xargs -r docker stop 2>/dev/null || true  
   sleep 2  
@@ -134,6 +138,12 @@ wipe_nvme() {
   if mountpoint -q "$DATA_MOUNT"; then  
     log "Unmounting ${DATA_MOUNT} ..."  
     umount -f "$DATA_MOUNT" 2>/dev/null || umount -l "$DATA_MOUNT" 2>/dev/null || true  
+  fi  
+  
+  # H3: parted mklabel rewrites the partition table even on a mounted device.  
+  # Refuse to wipe while anything still holds the mount.  
+  if mountpoint -q "$DATA_MOUNT"; then  
+    err "${DATA_MOUNT} is still mounted — refusing to wipe. Find the holder with: lsof +D ${DATA_MOUNT}"  
   fi  
   
   if grep -q "$DATA_MOUNT" /etc/fstab; then  
