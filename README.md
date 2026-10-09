@@ -44,21 +44,22 @@ Takes ~15–30 minutes (most of it compiling llama.cpp). The installer runs insi
 [+] Gitea starting at http://192.168.1.33:3000
 
 ━━━ 4/10: llama.cpp + model ━━━
-Selected model: Qwen2.5-1.5B-Instruct (1.1 GB, ~25 tok/s)
+Selected model: Qwen2.5-3B-Instruct (1.9 GB, ~3 tok/s)
 [+] llama.cpp built successfully
 [+] Model downloaded (1.0G)
 
 ━━━ 5/10: llama-server (persistent model in RAM) ━━━
-[+] llama-server ready — model resident in RAM (~1.2 GB)
+[+] llama-server ready — model resident in RAM (~1.9GB loaded)
 
 ━━━ 6/10: Web UI ━━━
-[+] Web UI running at http://192.168.1.33:5000
+[+] Web UI running at http://192.168.1.<PI:IP>:5000
 
 ━━━ 7/10: System optimization + overclock ━━━
 [+] ZRAM configured (50% of RAM, zstd compression)
 Overclock the Pi 5? [y/N]: y
 Profile [1]: 1
 [+] Applied conservative overclock — 2.6 GHz CPU, 850 MHz GPU
+[+] Note: the `dtparam=fan_temp*` curve in `config.txt` only drives the official GPIO Active Cooler.  
 
 ━━━ 8/10: Reference repository ━━━
 Git repository URL (leave blank to skip): https://github.com/vekzla/DizerCore-WoW.git
@@ -340,7 +341,7 @@ Or answer `y` at the wipe prompt when re-running the installer.
 
 Fine-tune whichever Qwen2.5 model is installed on the Pi (the dataset carries a meta row naming the base model — e.g. 3b-base → Qwen/Qwen2.5-3B-Instruct). Runs once on Kaggle's free T4 GPU; produces a ~1–2 GB GGUF that replaces the base model.
 
-Full walkthrough: training/README.md [training/README.md](training/README.md)
+Full walkthrough: [training/README.md](training/README.md)
 The Four Phases
 Phase	Where	Time
 1. Build dataset	Pi (Web UI)	2–5 min
@@ -357,7 +358,6 @@ If you switch models on the Pi, rebuild the dataset before retraining — the me
 | `training/dataset-builder.py` | Walks `/data/reference/`, produces JSONL |
 | `training/dizercore-colab.ipynb` | Kaggle training notebook (multi-cell) |
 | `training/README.md` | Step-by-step guide |
-| `web-ui/training.py` | Flask blueprint — build, upload, deploy, revert |
 | `web-ui/training-deploy.sh` | Privileged helper that swaps the active model |
 
 ### What Training Does  
@@ -431,7 +431,7 @@ sudo bash /tmp/audit.sh
 Saved to `/tmp/dizercore-audit-YYYYMMDD-HHMMSS.txt`. Pull it off with:
 
 ```bash
-scp tadashi@<pi-ip>:/tmp/dizercore-audit-*.txt .
+scp <your-user>@<pi-ip>:/tmp/dizercore-audit-*.txt .
 ```
 
 The script is **read-only**. Safe to run any time.
@@ -451,7 +451,7 @@ If both show `/data/models/dizercore-q4_k_m.gguf`, the deploy worked — force-r
 
 ```bash
 sudo cat /etc/sudoers.d/dizercore-update
-# Should include: tadashi ALL=(ALL) NOPASSWD: /data/web-ui/training-deploy.sh
+# Should include: <your-user> ALL=(ALL) NOPASSWD: /data/web-ui/training-deploy.sh
 ```
 
 **Prompt output references made-up schema**
@@ -573,14 +573,13 @@ DizerCore-AI.Assistant/
 │   ├── 07-readme.sh
 │   ├── 08-reference-repo.sh
 │   ├── 09-llama-server.sh
-│   └── 11-training.sh
+│   └── 10-training.sh
 ├── training/
 │   ├── dataset-builder.py
 │   ├── dizercore-colab.ipynb
 │   └── README.md
 └── web-ui/
     ├── app.py
-    ├── training.py
     ├── training-deploy.sh
     ├── indexer.py
     ├── index-watcher.py
