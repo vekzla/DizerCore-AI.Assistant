@@ -43,44 +43,38 @@ case "$action" in
       exit 1  
     fi  
     # GGUF magic check — same gate the upload endpoint applies  
-    if [[ "$(head -c 4 "$model_path")" != "GGUF" ]]; then  
+    if ! head -c 4 "$model_path" | grep -q 'GGUF'; then  
       echo "Refused: $model_path is not a GGUF file" >&2  
       exit 1  
     fi  
   
-    # Backup the current unit only if we don't already have one  
+    # Keep a one-time backup of the pre-training unit for `revert`  
     if [[ ! -f "$BACKUP" ]]; then  
       cp "$SERVICE" "$BACKUP"  
-      echo "Backed up current unit → $BACKUP"  
     fi  
   
-    # Replace the -m argument in the ExecStart line.  
-    # Path is already whitelist-validated, but escape the sed  
-    # replacement anyway as defence in depth.  
-    model_path_esc="${model_path//\\/\\\\}"  
-    model_path_esc="${model_path_esc//|/\\|}"  
-    model_path_esc="${model_path_esc//&/\\&}"  
-    sed -i "s| -m [^ ]*| -m ${model_path_esc}|" "$SERVICE"  
+    # The path passed the whitelist regex above, so it contains none of  
+    # sed's metacharacters (| & \) — safe to interpolate.  
+    sed -i "s| -m [^ ]*| -m ${model_path}|" "$SERVICE"  
   
     systemctl daemon-reload  
-    systemctl restart llama-server  
-    echo "Deployed: $model_path"  
+    systemctl restart llama-server.service  
+    echo "Deployed model: $model_path"  
     ;;  
   
   revert)  
     if [[ ! -f "$BACKUP" ]]; then  
-      echo "No backup found at $BACKUP — nothing to revert to" >&2  
+      echo "No backup found at $BACKUP — nothing to revert" >&2  
       exit 1  
     fi  
-    # cp (not mv) so the backup survives and revert can run again  
     cp "$BACKUP" "$SERVICE"  
     systemctl daemon-reload  
-    systemctl restart llama-server  
-    echo "Reverted to base model"  
+    systemctl restart llama-server.service  
+    echo "Reverted to pre-training unit"  
     ;;  
   
   *)  
-    echo "Usage: $0 {deploy <model>|revert}" >&2  
+    echo "Usage: $0 {deploy <model_path>|revert}" >&2  
     exit 1  
     ;;  
 esac
