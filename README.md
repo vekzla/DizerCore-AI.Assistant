@@ -671,8 +671,6 @@ sudo apt update
 sudo apt install -y unattended-upgrades apt-listchanges  
 sudo dpkg-reconfigure -plow unattended-upgrades   # select "Yes"
 ```
-systemctl status unattended-upgrades.service  
-sudo unattended-upgrades --dry-run -d | tail -20
 
 <div align="center">
 
