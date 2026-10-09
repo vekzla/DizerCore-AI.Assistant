@@ -367,7 +367,9 @@ sudo touch /var/log/dizercore-repo-sync.log && sudo chown $USER:$USER /var/log/d
 ### 2. Create the job 
 crontab -e
 
-0 */6 * * * git -C /data/reference/<repo-name> pull --ff-only >> /var/log/dizercore-repo-sync.log 2>&1
+```bash  
+0 */6 * * * cd /data/reference/DizerCore-WoW && git checkout master && git pull --ff-only origin master >> /tmp/dizercore-repo-sync.log 2>&1
+```
 
 ### Files in the Repo
 
