@@ -171,7 +171,8 @@ if [[ -d /data/reference ]] && [[ -n "$(ls -A /data/reference 2>/dev/null)" ]]; 
   for d in /data/reference/*/; do
     [[ -d "$d/.git" ]] || continue
     NAME=$(basename "$d")
-    BRANCH=$(sudo -u tadashi git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
+    REPO_OWNER=$(stat -c %U "$d" 2>/dev/null || echo "pi")  
+    BRANCH=$(sudo -u "$REPO_OWNER" git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
     SIZE=$(du -sh "$d" 2>/dev/null | cut -f1)
     OK "$NAME (branch: $BRANCH, $SIZE)"
   done
