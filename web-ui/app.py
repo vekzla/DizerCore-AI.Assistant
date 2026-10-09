@@ -23,14 +23,14 @@ from urllib.error import URLError, HTTPError
 from flask import (Flask, render_template, request, jsonify,  
                    send_from_directory, send_file)  
 from werkzeug.exceptions import HTTPException  
-from flask_cors import CORS  
+# flask_cors intentionally not imported — the UI is same-origin only.  
+# Leaving CORS(app) in place was the C1 finding (Access-Control-Allow-Origin: *).  
 import psutil  
   
 app = Flask(__name__)  
-CORS(app)  
   
-# Allow up to 4 GB uploads for the trained GGUF  
-app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024 * 1024  
+# Largest realistic Q4_K_M model upload ~1.5 GB. Was 4 GB (C2).  
+app.config["MAX_CONTENT_LENGTH"] = 1600 * 1024 * 1024  
   
 MODEL = os.environ.get("MODEL_PATH", "/data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf")  
 LLAMA_BIN = os.environ.get("LLAMA_BIN", "/data/llama.cpp/build/bin/llama-cli")  
@@ -75,6 +75,50 @@ REPO_EXCLUDE_GLOBS = [
     "!.git/**", "!node_modules/**", "!*.min.*",  
 ]  
   
+# =============================================================================  
+# API token auth (Phase 1 — C1/H5 fix)  
+#  
+# Every /api/* request must carry the X-DizerCore-Token header matching  
+# ${WEB_UI_DIR}/.api-token, written by lib/05-webui.sh and exported via  
+# API_TOKEN_FILE in prompt-gateway.service.  
+#  
+# /api/token is the ONE exempt endpoint: it exists so the same-origin page  
+# can learn the token. Cross-origin pages can send a request to it but the  
+# browser blocks them from reading the response (no CORS headers are sent).  
+# Fails closed: if the token file is missing, all /api/* return 503.  
+# =============================================================================  
+  
+API_TOKEN_FILE = os.environ.get("API_TOKEN_FILE",  
+                                "/data/web-ui/.api-token")  
+API_TOKEN = None  
+try:  
+    with open(API_TOKEN_FILE) as _tf:  
+        API_TOKEN = _tf.read().strip() or None  
+except OSError:  
+    API_TOKEN = None  
+  
+  
+@app.before_request  
+def require_api_token():  
+    if not request.path.startswith("/api/"):  
+        return None  
+    if request.path == "/api/token":  
+        return None  
+    if not API_TOKEN:  
+        app.logger.error("API token file missing/empty at %s",  
+                         API_TOKEN_FILE)  
+        return jsonify({"error": "server not configured"}), 503  
+    if request.headers.get("X-DizerCore-Token") != API_TOKEN:  
+        return jsonify({"error": "unauthorized"}), 401  
+  
+  
+@app.route("/api/token")  
+def api_token():  
+    if not API_TOKEN:  
+        return jsonify({"error": "not configured"}), 503  
+    return jsonify({"token": API_TOKEN})  
+  
+  
 os.makedirs(HISTORY_DIR, exist_ok=True)  
 os.makedirs(LOGO_DIR, exist_ok=True)  
   
@@ -87,12 +131,9 @@ os.makedirs(LOGO_DIR, exist_ok=True)
 def handle_exception(e):  
     if isinstance(e, HTTPException):  
         return e  
-    tb = traceback.format_exc()  
-    return jsonify({  
-        "error": str(e),  
-        "type": type(e).__name__,  
-        "traceback": tb.split("\n")[-6:],  
-    }), 500  
+    # Full traceback goes to the journal only — not to the client (L6).  
+    app.logger.error("unhandled: %s", traceback.format_exc())  
+    return jsonify({"error": str(e), "type": type(e).__name__}), 500  
   
   
 # =============================================================================  
@@ -146,30 +187,30 @@ def _mark_ai_idle():
 # hint lines get appended to this shared prompt.  
 # =============================================================================  
   
-SYSTEM_PROMPT = """You are a software engineer building a TrinityCore WoW emulation server. You investigate issues and produce structured prompts listing which files/folders to check and what to verify — SQL or C++ code. You never write the fix itself.    
-    
-The user describes a problem. You respond with an investigation plan, NOT a fix.    
-    
-OUTPUT FORMAT (use exactly these three section headers):    
-    
-FILES TO CHECK:    
-1. <real file path — prefer paths from the matched files below>    
-   - what to look at inside it    
-2. <next file or folder>    
-   - what to look at inside it    
-    
-WHAT TO VERIFY:    
-- <specific check — a SQL query to run, a function behaviour to trace, a schema agreement to confirm>    
-- <next check>    
-    
-PROMPT FOR NEXT AI:    
-<A ready-to-paste paragraph for a follow-up AI. It names the exact file(s), function(s), table(s) and row id(s) discovered above, states what to inspect, and defines what "done" looks like. This is the deliverable — make it self-contained.>    
-    
-RULES:    
-- Name REAL files, tables, columns, functions, opcodes and constants from the matched excerpts. Never invent them    
-- Never write the actual fix, the corrective SQL, or replacement C++ code    
-- If a detail is not in the matches, write "verify against the actual schema/source" instead of guessing    
-- End the PROMPT FOR NEXT AI block with a Success: line stating the observable in-game result"""    
+SYSTEM_PROMPT = """You are a software engineer building a TrinityCore WoW emulation server. You investigate issues and produce structured prompts listing which files/folders to check and what to verify — SQL or C++ code. You never write the fix itself.  
+  
+The user describes a problem. You respond with an investigation plan, NOT a fix.  
+  
+OUTPUT FORMAT (use exactly these three section headers):  
+  
+FILES TO CHECK:  
+1. <real file path — prefer paths from the matched files below>  
+   - what to look at inside it  
+2. <next file or folder>  
+   - what to look at inside it  
+  
+WHAT TO VERIFY:  
+- <specific check — a SQL query to run, a function behaviour to trace, a schema agreement to confirm>  
+- <next check>  
+  
+PROMPT FOR NEXT AI:  
+<A ready-to-paste paragraph for a follow-up AI. It names the exact file(s), function(s), table(s) and row id(s) discovered above, states what to inspect, and defines what "done" looks like. This is the deliverable — make it self-contained.>  
+  
+RULES:  
+- Name REAL files, tables, columns, functions, opcodes and constants from the matched excerpts. Never invent them  
+- Never write the actual fix, the corrective SQL, or replacement C++ code  
+- If a detail is not in the matches, write "verify against the actual schema/source" instead of guessing  
+- End the PROMPT FOR NEXT AI block with a Success: line stating the observable in-game result"""  
   
 # Per-domain rule lines appended to the shared prompt. _detect_mode() picks  
 # ONE of these — the persona and output format never change.  
@@ -946,6 +987,9 @@ def upload_logo():
     f = request.files["logo"]  
     if not f.filename:  
         return jsonify({"error": "No filename"}), 400  
+    # C2: cap logo uploads well below the global limit — it's an image.  
+    if (request.content_length or 0) > 5 * 1024 * 1024:  
+        return jsonify({"error": "Logo too large (5 MB max)"}), 413  
     ext = os.path.splitext(f.filename)[1].lower()  
     if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):  
         return jsonify({"error": "Invalid image format"}), 400  
@@ -1608,12 +1652,19 @@ def training_upload_model():
     os.makedirs(os.path.dirname(TRAINED_MODEL), exist_ok=True)  
     tmp = TRAINED_MODEL + ".part"  
     try:  
-        f.save(tmp)  
-        # GGUF magic check — reject truncated/HTML error-page uploads early  
-        with open(tmp, "rb") as fh:  
-            if fh.read(4) != b"GGUF":  
-                os.remove(tmp)  
-                return jsonify({"error": "Not a valid GGUF file"}), 400  
+        # C2: validate the GGUF magic off the raw stream BEFORE writing  
+        # anything to disk, then copy the body in 1 MB chunks. A bogus  
+        # request is rejected after 4 bytes, not after a full write.  
+        stream = request.stream  
+        if stream.read(4) != b"GGUF":  
+            return jsonify({"error": "Not a valid GGUF file"}), 400  
+        with open(tmp, "wb") as out:  
+            out.write(b"GGUF")  
+            while True:  
+                chunk = stream.read(1024 * 1024)  
+                if not chunk:  
+                    break  
+                out.write(chunk)  
         os.replace(tmp, TRAINED_MODEL)  
     except Exception as e:  
         try:  
