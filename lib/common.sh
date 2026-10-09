@@ -149,7 +149,7 @@ export LLAMA_SERVER_URL="http://${LLAMA_SERVER_HOST}:${LLAMA_SERVER_PORT}"
 export REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"  
   
 # ---------- derived user + network ----------  
-export REAL_USER="${SUDO_USER:-pi}"  
+export REAL_USER="${SUDO_USER:-$(stat -c %U "${DATA_MOUNT:-/data}" 2>/dev/null || echo "$(whoami)")}"
 export REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)  
 export PI_HOST_IP=$(hostname -I | awk '{print $1}')  
 export PI_HOST="$PI_HOST_IP"  
