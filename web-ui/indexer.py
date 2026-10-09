@@ -203,10 +203,15 @@ def build_index():
     except OSError:  
         pass  
   
-    elapsed = time.time() - started  
+elapsed = time.time() - started  
     size = os.path.getsize(DB_FILE) / (1024 * 1024)  
     print()  
     print(f"Indexed {count} files, {total_bytes // (1024*1024)} MB of text")  
     print(f"Skipped {skipped_by_path} by path filter")  
     print(f"Skipped {skipped_by_size} by size "  
-          f"(>{MAX_FILE_SIZE // (1024*1024)} MB
+          f"(>{MAX_FILE_SIZE // (1024*1024)} MB or unreadable)")  
+    print(f"Index written to {DB_FILE} ({size:.1f} MB) in {elapsed:.0f}s")  
+  
+  
+if __name__ == "__main__":  
+    build_index()
