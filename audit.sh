@@ -130,9 +130,10 @@ done
 HDR "9/14: Web UI"
 if [[ -d /data/web-ui ]]; then
   OK "/data/web-ui exists"
-  for f in app.py training.py indexer.py index-watcher.py training-deploy.sh game-data.txt requirements.txt; do
+  for f in app.py indexer.py index-watcher.py training-deploy.sh game-data.txt requirements.txt; do
     [[ -f "/data/web-ui/$f" ]] && OK "  $f" || FAIL "  $f missing"
   done
+  [[ -f /data/training/dataset-builder.py ]] && OK "  /data/training/dataset-builder.py" || WARN "  dataset-builder.py not deployed"
   [[ -f /data/web-ui/templates/index.html ]] && OK "  templates/index.html" || FAIL "  templates/index.html missing"
   [[ -f /data/web-ui/static/logo.png ]] && OK "  static/logo.png" || WARN "  static/logo.png missing"
 else
