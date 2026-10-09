@@ -563,6 +563,35 @@
 </style>  
 </head>
 <body>  
+<script>  
+// ==========================================================================  
+// NEW: API token bootstrap (Phase 1 — C1 fix)  
+// Fetches the token from /api/token — an endpoint browsers can only read  
+// same-origin — then wraps window.fetch so every existing call sends  
+// X-DizerCore-Token automatically. Requests queue behind _ready so nothing  
+// fires before the token arrives. The token is also exposed as  
+// window.__dizerToken for the XMLHttpRequest in uploadModel().  
+// ==========================================================================  
+(function () {  
+  var _fetch = window.fetch.bind(window);  
+  var _token = null;  
+  var _ready = _fetch("/api/token")  
+    .then(function (r) { return r.ok ? r.json() : {}; })  
+    .then(function (d) { _token = d.token || null; window.__dizerToken = _token; })  
+    .catch(function () {});  
+  window.fetch = function (url, opts) {  
+    return _ready.then(function () {  
+      opts = opts || {};  
+      if (_token) {  
+        var h = Object.assign({}, opts.headers);  
+        h["X-DizerCore-Token"] = _token;  
+        opts.headers = h;  
+      }  
+      return _fetch(url, opts);  
+    });  
+  };  
+})();  
+</script>  
   
 <div class="header">  
   <img id="logo" src="/static/logo.png" alt="Logo" onerror="this.style.display='none'">  
@@ -1091,6 +1120,28 @@ function toast(msg, isError) {
 }  
   
 // =============================================================================  
+// NEW: authenticated file download helper  
+// window.location.href navigations cannot send X-DizerCore-Token, so GET  
+// downloads go through fetch -> blob -> object URL instead.  
+// =============================================================================  
+async function downloadApiFile(url, filename) {  
+  const res = await fetch(url);  
+  if (!res.ok) {  
+    const err = await res.json().catch(() => ({}));  
+    alert(err.error || 'Download failed');  
+    return;  
+  }  
+  const blob = await res.blob();  
+  const a = document.createElement('a');  
+  a.href = URL.createObjectURL(blob);  
+  a.download = filename;  
+  document.body.appendChild(a);  
+  a.click();  
+  document.body.removeChild(a);  
+  URL.revokeObjectURL(a.href);  
+}  
+  
+// =============================================================================  
 // Version check  
 // =============================================================================  
 let versionTimer = null;  
@@ -1377,7 +1428,8 @@ function closeLog() {
   if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }  
 }  
   
-function downloadLog() { window.location.href = '/api/log/download'; }  
+// NEW: was window.location.href — navigation can't send the auth header  
+function downloadLog() { downloadApiFile('/api/log/download', 'dizercore-install.log'); }  
   
 async function clearLog() {  
   if (!confirm('Clear the installer log? This cannot be undone.')) return;  
@@ -1607,8 +1659,9 @@ async function buildDataset() {
   await loadTrainingBuildStatus();  
 }  
   
+// NEW: was window.location.href — navigation can't send the auth header  
 function downloadDataset() {  
-  window.location.href = '/api/training/dataset/download';  
+  downloadApiFile('/api/training/dataset/download', 'dizercore-dataset.jsonl');  
 }  
   
 function onTrainingFileSelected(input) {  
@@ -1681,6 +1734,10 @@ async function uploadModel() {
       resolve();  
     });  
     xhr.open('POST', '/api/training/upload-model');  
+    // NEW: XHR bypasses the fetch wrapper — send the token explicitly  
+    if (window.__dizerToken) {  
+      xhr.setRequestHeader('X-DizerCore-Token', window.__dizerToken);  
+    }  
     xhr.send(form);  
   });  
 }  
