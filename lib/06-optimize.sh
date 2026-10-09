@@ -79,9 +79,11 @@ configure_overclock() {
 
 # DizerCore overclock (aggressive)
 # Reboot required. Monitor temp in the Web UI. Throttle at 80°C.
-arm_freq=2800
-gpu_freq=900
-over_voltage=2
+# Aggressive becomes:  
+arm_boost=1  
+arm_freq=2800  
+gpu_freq=900  
+over_voltage=2  
 EOF
       log "Applied aggressive overclock — 2.8 GHz CPU, 900 MHz GPU"
       warn "Reboot required. Watch CPU temp — above 80°C means throttling (add better cooling)"
@@ -91,8 +93,10 @@ EOF
 
 # DizerCore overclock (conservative)
 # Reboot required. Monitor temp in the Web UI. Throttle at 80°C.
-arm_freq=2600
-gpu_freq=850
+# Conservative becomes:  
+arm_boost=1  
+arm_freq=2600  
+gpu_freq=850  
 over_voltage=1
 EOF
       log "Applied conservative overclock — 2.6 GHz CPU, 850 MHz GPU"
