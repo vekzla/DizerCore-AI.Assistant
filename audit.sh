@@ -199,7 +199,8 @@ for f in /etc/sudoers.d/dizercore-update /etc/docker/daemon.json /etc/default/zr
   [[ -f "$f" ]] && OK "$f" || WARN "$f missing"
 done
 grep -q "vm.swappiness" /etc/sysctl.conf 2>/dev/null && OK "sysctl: $(grep vm.swappiness /etc/sysctl.conf)" || WARN "vm.swappiness not set"
-[[ -f /boot/firmware/config.txt ]] && grep -qE "^arm_freq=" /boot/firmware/config.txt && OK "Overclock: $(grep ^arm_freq /boot/firmware/config.txt)" || WARN "No overclock"
+BOOTCFG="/boot/firmware/config.txt"; [[ -f "$BOOTCFG" ]] || BOOTCFG="/boot/config.txt"  
+[[ -f "$BOOTCFG" ]] && grep -qE "^arm_freq=" "$BOOTCFG" && OK "Overclock: $(grep ^arm_freq "$BOOTCFG") ($BOOTCFG)" || WARN "No overclock"
 
 # 14. Logs
 HDR "14/14: Logs"
