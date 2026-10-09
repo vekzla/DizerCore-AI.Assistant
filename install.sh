@@ -103,7 +103,7 @@ source lib/06-optimize.sh
 source lib/07-readme.sh
 source lib/08-reference-repo.sh
 source lib/09-llama-server.sh
-source lib/11-training.sh
+source lib/10-training.sh
 source "${PWD}/uninstall.sh"  # provides perform_uninstall_installer() for the NVMe wipe step
 
 # ---------- warn if not in tmux and stdin is piped ----------
