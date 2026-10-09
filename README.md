@@ -351,6 +351,24 @@ Phase	Where	Time
 
 If you switch models on the Pi, rebuild the dataset before retraining — the meta row must match the installed model or the wrong base gets trained.
 
+## Reference Repo Auto-Sync (cron)  
+  
+The index-watcher service (`dizercore-index-watcher.service`) already checks  
+every 5 minutes whether any file under `/data/reference/` is newer than the  
+index DB — and rebuilds the index + dataset automatically when it is. So the  
+only scheduled job needed is a `git pull`; the watcher does the reindexing on  
+its own. No manual trigger, no extra daemons.  
+  
+### 1. Make the log writeable  
+  
+```bash  
+sudo touch /var/log/dizercore-repo-sync.log && sudo chown $USER:$USER /var/log/dizercore-repo-sync.log
+```
+### 2. Create the job 
+crontab -e
+
+0 */6 * * * git -C /data/reference/<repo-name> pull --ff-only >> /var/log/dizercore-repo-sync.log 2>&1
+
 ### Files in the Repo
 
 | File | Purpose |
