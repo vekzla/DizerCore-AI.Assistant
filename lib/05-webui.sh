@@ -17,6 +17,14 @@ install_webui() {
 
   install_webui_logo
 
+  # ---------- API token ----------  
+  # Shared secret the Web UI requires on every /api/* request. Written once,  
+  # reused on re-installs so existing browsers keep working.  
+  if [[ ! -f "${WEB_UI_DIR}/.api-token" ]]; then  
+    cat /proc/sys/kernel/random/uuid | tr -d '-' > "${WEB_UI_DIR}/.api-token"  
+    chmod 600 "${WEB_UI_DIR}/.api-token"  
+  fi
+
   if [[ ! -d "$VENV_DIR" ]]; then
     python3 -m venv "$VENV_DIR"
   fi
