@@ -657,6 +657,21 @@ sudo bash /data/dizercore-src/install.sh
 
 ---
 
+## Automatic Security Updates  
+  
+Security-only updates run via `unattended-upgrades` (Debian's standard tool —  
+no cron needed, self-scheduled daily).  
+  
+### Enable and verify (one-time, on the Pi)  
+  
+```bash  
+sudo apt update  
+sudo apt install -y unattended-upgrades apt-listchanges  
+sudo dpkg-reconfigure -plow unattended-upgrades   # select "Yes"
+```
+systemctl status unattended-upgrades.service  
+sudo unattended-upgrades --dry-run -d | tail -20
+
 <div align="center">
 
 <img src="web-ui/static/DizerCoreYNoBGAI.png" alt="DizerCore" width="80">
