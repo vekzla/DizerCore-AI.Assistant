@@ -2,15 +2,19 @@
 # =============================================================================  
 # DizerCore AI Assistant  
 # -----------------------------------------------------------------------------  
-# File:    lib/11-training.sh  
-# Purpose: Set up the training directory, install the deploy helper, wire  
-#          the sudoers rule for the Web UI, and copy the training assets  
-#          from the repo to the NVMe. The Web UI's Training tab drives the  
-#          rest.  
+# File:    lib/10-training.sh  
+# Purpose: Set up the training directory, install the deploy helper (root-owned  
+#          in /usr/local/sbin), wire the sudoers rule for the Web UI, and copy  
+#          the training assets from the repo to the NVMe. The Web UI's  
+#          Training tab drives the rest.  
 # =============================================================================  
   
 # Defaults if not already defined by the caller  
 export TRAINING_DIR="${TRAINING_DIR:-${DATA_MOUNT}/training}"  
+  
+# Root-owned install location for the privileged helper (H2). The Web UI  
+# user can sudo it but cannot rewrite it.  
+DEPLOY_HELPER="/usr/local/sbin/dizercore-training-deploy"  
   
 install_training() {  
   log "Setting up training infrastructure ..."  
@@ -40,19 +44,23 @@ install_training() {
     log "Dataset builder installed at ${TRAINING_DIR}/dataset-builder.py"  
   fi  
   
-  # ---------- make deploy helper executable ----------  
+  # ---------- install deploy helper to root-owned location ----------  
   if [[ -f "${WEB_UI_DIR}/training-deploy.sh" ]]; then  
-    chmod +x "${WEB_UI_DIR}/training-deploy.sh"  
-    chown root:root "${WEB_UI_DIR}/training-deploy.sh"  
-    log "Deploy helper ready at ${WEB_UI_DIR}/training-deploy.sh"  
+    install -o root -g root -m 0755 \  
+      "${WEB_UI_DIR}/training-deploy.sh" "$DEPLOY_HELPER"  
+    log "Deploy helper installed at ${DEPLOY_HELPER} (root-owned)"  
+    # Remove the user-writable copy so nothing can sudo the wrong script  
+    rm -f "${WEB_UI_DIR}/training-deploy.sh"  
   else  
     warn "training-deploy.sh not found — Web UI training deploy will fail"  
   fi  
   
-  # ---------- sudoers rule for the deploy helper ----------  
+  # ---------- sudoers rules ----------  
   # printf instead of heredoc: trailing whitespace cannot break it  
   local sudoers_file="/etc/sudoers.d/dizercore-update"  
-  printf '%s ALL=(ALL) NOPASSWD: /bin/bash %s/install.sh\n%s ALL=(ALL) NOPASSWD: %s/install.sh\n%s ALL=(ALL) NOPASSWD: %s/training-deploy.sh\n' "$REAL_USER" "$SRC_DIR" "$REAL_USER" "$SRC_DIR" "$REAL_USER" "$WEB_UI_DIR" > "$sudoers_file"  
+  printf '%s ALL=(ALL) NOPASSWD: /bin/bash %s/install.sh\n%s ALL=(ALL) NOPASSWD: %s/install.sh\n%s ALL=(ALL) NOPASSWD: %s\n' \  
+    "$REAL_USER" "$SRC_DIR" "$REAL_USER" "$SRC_DIR" "$REAL_USER" "$DEPLOY_HELPER" \  
+    > "$sudoers_file"  
   chmod 440 "$sudoers_file"  
   
   # Validate sudoers syntax before moving on  
