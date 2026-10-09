@@ -54,7 +54,7 @@ EOF
 
   systemctl enable --now docker containerd
 
-  usermod -aG docker "$REAL_USER" || true
+  usermod -aG docker "$REAL_USER" 2>/dev/null || warn "Could not add ${REAL_USER} to docker group"
   info "User ${REAL_USER} added to docker group — log out and back in."
 
   # ---------- relocate Docker to NVMe ----------
