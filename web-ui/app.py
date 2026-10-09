@@ -1,3 +1,4 @@
+#!/usr/bin/env python3  
 # =============================================================================  
 # DizerCore AI Assistant  
 # -----------------------------------------------------------------------------  
@@ -5,7 +6,7 @@
 # Purpose: Flask backend. Talks to llama-server (persistent, fast) with a  
 #          fallback to llama-cli subprocess. Searches the reference repo using  
 #          a SQLite FTS5 index when available, or ripgrep as fallback.  
-#          Registers the Training blueprint for LoRA dataset + model mgmt.  
+#          Provides the Training endpoints for LoRA dataset + model mgmt.  
 # =============================================================================  
   
 import os  
@@ -25,14 +26,11 @@ from werkzeug.exceptions import HTTPException
 from flask_cors import CORS  
 import psutil  
   
-from training import training_bp  
-  
 app = Flask(__name__)  
 CORS(app)  
   
 # Allow up to 4 GB uploads for the trained GGUF  
 app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024 * 1024  
-app.register_blueprint(training_bp)  
   
 MODEL = os.environ.get("MODEL_PATH", "/data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf")  
 LLAMA_BIN = os.environ.get("LLAMA_BIN", "/data/llama.cpp/build/bin/llama-cli")  
@@ -148,30 +146,30 @@ def _mark_ai_idle():
 # hint lines get appended to this shared prompt.  
 # =============================================================================  
   
-SYSTEM_PROMPT = """You are a software engineer building a TrinityCore WoW emulation server. You investigate issues and produce structured prompts listing which files/folders to check and what to verify — SQL or C++ code. You never write the fix itself.  
-  
-The user describes a problem. You respond with an investigation plan, NOT a fix.  
-  
-OUTPUT FORMAT (use exactly these three section headers):  
-  
-FILES TO CHECK:  
-1. <real file path — prefer paths from the matched files below>  
-   - what to look at inside it  
-2. <next file or folder>  
-   - what to look at inside it  
-  
-WHAT TO VERIFY:  
-- <specific check — a SQL query to run, a function behaviour to trace, a schema agreement to confirm>  
-- <next check>  
-  
-PROMPT FOR NEXT AI:  
-<A ready-to-paste paragraph for a follow-up AI. It names the exact file(s), function(s), table(s) and row id(s) discovered above, states what to inspect, and defines what "done" looks like. This is the deliverable — make it self-contained.>  
-  
-RULES:  
-- Name REAL files, tables, columns, functions, opcodes and constants from the matched excerpts. Never invent them  
-- Never write the actual fix, the corrective SQL, or replacement C++ code  
-- If a detail is not in the matches, write "verify against the actual schema/source" instead of guessing  
-- End the PROMPT FOR NEXT AI block with a Success: line stating the observable in-game result"""  
+SYSTEM_PROMPT = """You are a software engineer building a TrinityCore WoW emulation server. You investigate issues and produce structured prompts listing which files/folders to check and what to verify — SQL or C++ code. You never write the fix itself.    
+    
+The user describes a problem. You respond with an investigation plan, NOT a fix.    
+    
+OUTPUT FORMAT (use exactly these three section headers):    
+    
+FILES TO CHECK:    
+1. <real file path — prefer paths from the matched files below>    
+   - what to look at inside it    
+2. <next file or folder>    
+   - what to look at inside it    
+    
+WHAT TO VERIFY:    
+- <specific check — a SQL query to run, a function behaviour to trace, a schema agreement to confirm>    
+- <next check>    
+    
+PROMPT FOR NEXT AI:    
+<A ready-to-paste paragraph for a follow-up AI. It names the exact file(s), function(s), table(s) and row id(s) discovered above, states what to inspect, and defines what "done" looks like. This is the deliverable — make it self-contained.>    
+    
+RULES:    
+- Name REAL files, tables, columns, functions, opcodes and constants from the matched excerpts. Never invent them    
+- Never write the actual fix, the corrective SQL, or replacement C++ code    
+- If a detail is not in the matches, write "verify against the actual schema/source" instead of guessing    
+- End the PROMPT FOR NEXT AI block with a Success: line stating the observable in-game result"""    
   
 # Per-domain rule lines appended to the shared prompt. _detect_mode() picks  
 # ONE of these — the persona and output format never change.  
@@ -1463,9 +1461,186 @@ def clear_log():
             f.write("")  
         return jsonify({"status": "cleared"})  
     except PermissionError:  
-        return jsonify({"error": "Permission denied. Run: sudo chown $USER /var/log/dizercore-install.log"}), 403
+        return jsonify({"error": "Permission denied. Run: sudo chown $USER /var/log/dizercore-install.log"}), 403  
     except Exception as e:  
         return jsonify({"error": str(e)}), 500  
+  
+  
+# =============================================================================  
+# Training endpoints  
+# (formerly the web-ui/training.py blueprint — inlined after that file was  
+#  removed; it only ever contained a stale copy of dataset-builder.py)  
+# =============================================================================  
+  
+TRAINING_DEPLOY_SCRIPT = os.path.join(  
+    os.path.dirname(__file__), "training-deploy.sh")  
+DATASET_BUILDER = os.path.join(TRAINING_DIR, "dataset-builder.py")  
+  
+_build_state = {"building": False, "log": "", "exit_code": None}  
+_build_lock = threading.Lock()  
+  
+  
+def _active_model_path():  
+    """Parse the -m arg out of llama-server.service ExecStart."""  
+    service_file = "/etc/systemd/system/llama-server.service"  
+    try:  
+        with open(service_file) as f:  
+            content = f.read().replace("\\\n", " ")  
+        for line in content.splitlines():  
+            if line.startswith("ExecStart="):  
+                parts = line.split()  
+                for i, tok in enumerate(parts):  
+                    if tok == "-m" and i + 1 < len(parts):  
+                        return parts[i + 1].rstrip("\\").strip()  
+    except Exception:  
+        pass  
+    return None  
+  
+  
+def _dataset_info():  
+    """Dataset stats. Example count is cached in a .count sidecar so we don't  
+    re-read a multi-GB JSONL on every UI poll."""  
+    info = {"exists": False, "size": 0, "count": 0, "mtime": None}  
+    if not os.path.isfile(DATASET_FILE):  
+        return info  
+    info["exists"] = True  
+    info["size"] = os.path.getsize(DATASET_FILE)  
+    info["mtime"] = os.path.getmtime(DATASET_FILE)  
+    count_file = DATASET_FILE + ".count"  
+    try:  
+        with open(count_file) as f:  
+            info["count"] = int(f.read().strip())  
+    except Exception:  
+        try:  
+            with open(DATASET_FILE) as f:  
+                info["count"] = sum(1 for _ in f)  
+            with open(count_file, "w") as f:  
+                f.write(str(info["count"]))  
+        except Exception:  
+            info["count"] = 0  
+    return info  
+  
+  
+@app.route("/api/training/status")  
+def training_status():  
+    ds = _dataset_info()  
+    trained = {"exists": os.path.isfile(TRAINED_MODEL), "size": 0}  
+    if trained["exists"]:  
+        trained["size"] = os.path.getsize(TRAINED_MODEL)  
+    active = _active_model_path()  
+    active_kind = "trained" if (  
+        active and  
+        os.path.abspath(active) == os.path.abspath(TRAINED_MODEL)) else "base"  
+    return jsonify({  
+        "dataset": ds,  
+        "trained_model": trained,  
+        "active_model": active,  
+        "active_kind": active_kind,  
+    })  
+  
+  
+@app.route("/api/training/build-dataset", methods=["POST"])  
+def training_build_dataset():  
+    with _build_lock:  
+        if _build_state["building"]:  
+            return jsonify({"error": "Build already running"}), 409  
+        if not os.path.isfile(DATASET_BUILDER):  
+            return jsonify({  
+                "error": f"dataset-builder.py not found at {DATASET_BUILDER}"  
+            }), 500  
+  
+        def run():  
+            _build_state["building"] = True  
+            _build_state["log"] = ""  
+            _build_state["exit_code"] = None  
+            try:  
+                python = "/data/venvs/webui/bin/python"  
+                if not os.path.isfile(python):  
+                    python = "python3"  
+                proc = subprocess.Popen(  
+                    [python, DATASET_BUILDER],  
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,  
+                    text=True, bufsize=1, cwd=TRAINING_DIR,  
+                )  
+                for line in iter(proc.stdout.readline, ""):  
+                    _build_state["log"] += line  
+                    # cap the in-memory log at ~200 KB  
+                    if len(_build_state["log"]) > 200000:  
+                        _build_state["log"] = _build_state["log"][-100000:]  
+                proc.wait()  
+                _build_state["exit_code"] = proc.returncode  
+                # invalidate the cached count so status reflects the new file  
+                try:  
+                    os.remove(DATASET_FILE + ".count")  
+                except OSError:  
+                    pass  
+            except Exception as e:  
+                _build_state["log"] += f"\nERROR: {e}\n"  
+                _build_state["exit_code"] = 1  
+            finally:  
+                _build_state["building"] = False  
+  
+        threading.Thread(target=run, daemon=True).start()  
+    return jsonify({"status": "started"})  
+  
+  
+@app.route("/api/training/build-dataset/status")  
+def training_build_status():  
+    return jsonify(_build_state)  
+  
+  
+@app.route("/api/training/dataset/download")  
+def training_dataset_download():  
+    if not os.path.isfile(DATASET_FILE):  
+        return jsonify({"error": "dataset not built yet"}), 404  
+    return send_file(DATASET_FILE, as_attachment=True,  
+                     download_name="dizercore-dataset.jsonl",  
+                     mimetype="application/jsonl")  
+  
+  
+@app.route("/api/training/upload-model", methods=["POST"])  
+def training_upload_model():  
+    if "model" not in request.files:  
+        return jsonify({"error": "No file"}), 400  
+    f = request.files["model"]  
+    if not f.filename or not f.filename.lower().endswith(".gguf"):  
+        return jsonify({"error": "Expected a .gguf file"}), 400  
+    os.makedirs(os.path.dirname(TRAINED_MODEL), exist_ok=True)  
+    tmp = TRAINED_MODEL + ".part"  
+    try:  
+        f.save(tmp)  
+        # GGUF magic check — reject truncated/HTML error-page uploads early  
+        with open(tmp, "rb") as fh:  
+            if fh.read(4) != b"GGUF":  
+                os.remove(tmp)  
+                return jsonify({"error": "Not a valid GGUF file"}), 400  
+        os.replace(tmp, TRAINED_MODEL)  
+    except Exception as e:  
+        try:  
+            os.remove(tmp)  
+        except OSError:  
+            pass  
+        return jsonify({"error": str(e)}), 500  
+    r = subprocess.run(  
+        ["sudo", "-n", TRAINING_DEPLOY_SCRIPT, "deploy", TRAINED_MODEL],  
+        capture_output=True, text=True, timeout=120)  
+    if r.returncode != 0:  
+        return jsonify({  
+            "error": f"deploy failed: {r.stderr.strip() or r.stdout.strip()}"  
+        }), 500  
+    return jsonify({"status": "deployed", "model": TRAINED_MODEL})  
+  
+  
+@app.route("/api/training/revert", methods=["POST"])  
+def training_revert():  
+    r = subprocess.run(  
+        ["sudo", "-n", TRAINING_DEPLOY_SCRIPT, "revert"],  
+        capture_output=True, text=True, timeout=120)  
+    if r.returncode != 0:  
+        return jsonify({  
+            "error": f"revert failed: {r.stderr.strip() or r.stdout.strip()}"  
+        }), 500  
+    return jsonify({"status": "reverted"})  
   
   
 # =============================================================================  
