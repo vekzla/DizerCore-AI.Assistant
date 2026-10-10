@@ -61,6 +61,8 @@ REPO_SEARCH_CHAR_LIMIT = 4000
 REPO_SEARCH_TIMEOUT = 10
 REPO_SEARCH_MAX_FILES_PER_KEYWORD = 500
 
+# Was 400; the structured output (4 FILES + 4 VERIFY + PROSE PROMPT) needed
+# headroom for the paragraph + Success: line, was getting truncated mid-sentence.
 GENERATE_MAX_TOKENS = 600
 
 WATCHER_TIMEOUT = 5
@@ -187,19 +189,12 @@ def _mark_ai_idle():
 #
 # The STRUCTURE EXAMPLE block uses deliberately fictional values
 # (ExampleRepo, ExampleFile.sql, 00000) and carries a "DO NOT COPY" banner.
-# The previous version used realistic-looking values (real repo path,
-# quest ID 94210) and the 3B model would echo them verbatim into output
-# that appeared to reference real artifacts but referenced nothing from
-# the matched excerpts.
 #
-# DOMAIN KNOWLEDGE section embeds TrinityCore 12.1.0 Midnight facts:
-#   - Real file layout (src/server/game/, sql/old/12.x/world/)
-#   - Per-table primary-key columns (quest_template.ID, creature.guid, etc.)
-#   - Out-of-scope tables (character_*, account, battlenet_*)
-#   - Common investigation patterns by symptom
-#
-# Rule 1 forbids invented C++ symbols.
-# Rule 7 forbids copying example values.
+# Rule 1 forbids invented C++ symbols. Also forbids using a C++ class name
+# (SpellScriptNames, SpellMgr, ObjectMgr) as a table name.
+# Rule 6 requires the Success: line to be the POSITIVE fixed outcome, never
+# the current broken state.
+# Rule 7 forbids copying the STRUCTURE EXAMPLE values.
 # =============================================================================
 
 SYSTEM_PROMPT = """You are a software engineer building a TrinityCore WoW emulation server. You investigate issues and produce structured prompts listing which files/folders to check and what to verify — SQL or C++ code. You never write the fix itself.
@@ -264,6 +259,12 @@ World-DB primary-key columns vary per table — never default to "entry":
 - conditions → SourceEntry
 - spell_area → spell
 - spell_script_names → spell_id
+- creature_questender → quest (the quest id) and id (the creature entry)
+- creature_queststarter → quest and id
+- gameobject_questender → quest and id
+
+GATING: TrinityCore uses the SINGLE shared `conditions` table for all
+gating. There is NO per-table _conditional companion table.
 
 OUT OF SCOPE — never cite these, even if a match contains them:
 - character_*, account, battlenet_*, guild_*, arena_*, mail, pet_* tables
@@ -279,16 +280,17 @@ Common investigation patterns:
 
 RULES — violating any of these makes the output unusable:
 
-1. Name REAL files, tables, columns, functions, opcodes, and constants from the matched excerpts. Never invent a C++ class, method, enum, or `SPELL_*`/`SMART_*`/`CMSG_*` constant. If the exact symbol name is not visible in the matches, write "<symbol not shown — verify against source>" instead of a plausible guess.
+1. Name REAL files, tables, columns, functions, opcodes, and constants from the matched excerpts. Never invent a C++ class, method, enum, or `SPELL_*`/`SMART_*`/`CMSG_*` constant. If the exact symbol name is not visible in the matches, write "<symbol not shown — verify against source>" instead of a plausible guess. C++ class names (SpellScriptNames, SpellMgr, ObjectMgr) are NOT table names — world-DB tables are always lowercase snake_case (`spell_script_names`, not SpellScriptNames). Never cite a `_conditional`, `_conditional_or`, or `_conditional_not` companion table — TrinityCore uses the shared `conditions` table for gating.
 2. Do NOT copy angle-bracket placeholder text from the format template above into your output. Every <…> is instructional — replace it with concrete content from the matches, or omit the line.
 3. PROMPT FOR NEXT AI must be a prose paragraph, NOT a command list. Console commands (.reload, .quest complete) may be mentioned inside the paragraph as part of a test step; they are not the section's content.
 4. Do NOT write the actual fix, corrective SQL, or replacement C++ code. You describe WHAT to check and WHAT to verify.
 5. If a needed column name is not visible in the matched excerpts, write "<column not shown — verify against schema>" and stop.
-6. End the PROMPT FOR NEXT AI section with exactly one line beginning "Success: " that states the observable in-game result.
+6. End the PROMPT FOR NEXT AI section with exactly one line beginning "Success: " that states the POSITIVE observable result when the issue is FIXED. Never phrase Success as the current broken state. Example: "Success: the quest credit fires when the player kills Lyssabel Dawnpetal." NOT "Success: the row is missing."
 7. The STRUCTURE EXAMPLE above uses fictional values (ExampleRepo, ExampleFile.sql, ExampleTable, ExampleColumn, 00000, ExampleClass::ExampleMethod). NEVER copy them into your output. Every concrete value — path, table, column, ID — must come from the matched excerpts or the user's prompt. If the user's prompt does not supply an ID, do NOT invent one; write "<id not shown — ask user>" and stop."""
 
-# Per-domain rule lines appended to the shared prompt. _detect_mode() picks
-# ONE of these — the persona and output format never change.
+# Per-domain rule lines appended to the shared prompt. _detect_modes() returns
+# one or more of these; all applicable blocks are appended so a query mixing
+# SQL and code paths gets both perspectives.
 DOMAIN_RULES = {
     "cpp": (
         "- Game logic lives under src/server/game/ — prefer those paths\n"
@@ -303,14 +305,21 @@ DOMAIN_RULES = {
         "- World DB tables: quest_template, quest_template_addon, "
         "quest_objectives, quest_poi, quest_poi_points, smart_scripts, "
         "creature_template, creature, spell_area, spell_script_names, "
-        "conditions\n"
+        "conditions, creature_questender, creature_queststarter\n"
         "- Primary-key columns vary per table: quest_template.ID, "
         "creature_template.entry, creature.guid, smart_scripts.entryorguid, "
         "conditions.SourceEntry — never default to 'entry' for every table\n"
+        "- creature_questender and creature_queststarter use `quest` for the "
+        "quest id and `id` for the creature entry — when the user's query "
+        "is about a specific quest, filter on `quest`, not `id`\n"
         "- There is NO generic 'status' column on quests — never suggest one\n"
         "- 12.x world SQL is under sql/old/12.x/world/ — use real paths\n"
         "- Character DB / auth DB tables are OUT OF SCOPE (character_*, "
-        "account, battlenet_*, guild_*, arena_*, mail, pet_*)"
+        "account, battlenet_*, guild_*, arena_*, mail, pet_*)\n"
+        "- If the problem involves game behaviour (not just data presence), "
+        "also name the C++ code path that reads the affected table — e.g. "
+        "ObjectMgr.cpp, SpellMgr.cpp, or the relevant AI script loader — "
+        "even if no C++ file appears in the matches"
     ),
     "smart": (
         "- smart_scripts columns: entryorguid, source_type, event_type, "
@@ -362,27 +371,45 @@ def _load_game_data():
 
 
 # =============================================================================
-# Domain classifier
+# Domain classifier — returns ALL applicable modes, most-specific first
 # =============================================================================
 
-def _detect_mode(text):
+def _detect_modes(text):
+    """Return a list of applicable modes. Always at least one entry.
+
+    A query about game behaviour (e.g. "quest credit not firing") matches
+    'sql' — but such problems also need the C++ loader path that reads the
+    affected table. When 'sql' matches we also include 'cpp' so the model
+    is nudged to name the code path as well.
+    """
     t = text.lower()
+    modes = []
     if any(w in t for w in ["opcode", "cmsg_", "smsg_", "packet",
                             "worldsession", "handler"]):
-        return "opcode"
+        modes.append("opcode")
     if any(w in t for w in ["smart_script", "smart script", "smartai",
                             "creature script", "npc script", "phase transition",
                             "boss script"]):
-        return "smart"
+        modes.append("smart")
     if any(w in t for w in ["dbc", "db2", "client data", "spellvisual",
                             "item.dbc", "item.db2"]):
-        return "dbc"
-    if any(w in t for w in ["sql", "database", "world db", "table",
-                            "quest_template", "creature_template",
-                            "insert", "update row", "delete row",
-                            "quest credit", "smart_scripts", "quest"]):
-        return "sql"
-    return "cpp"
+        modes.append("dbc")
+
+    sql_like = any(w in t for w in ["sql", "database", "world db", "table",
+                                     "quest_template", "creature_template",
+                                     "insert", "update row", "delete row",
+                                     "quest credit", "smart_scripts",
+                                     "quest", "creature_quest",
+                                     "spell_script"])
+    if sql_like:
+        modes.append("sql")
+        # Behaviour problems also need the C++ loader / handler path.
+        if "cpp" not in modes:
+            modes.append("cpp")
+
+    if not modes:
+        modes.append("cpp")
+    return modes
 
 
 # =============================================================================
@@ -684,7 +711,9 @@ def _format_repo_matches(result):
         "- If a needed column is not shown, write \"<column not shown — verify "
         "against schema>\" and stop.\n"
         "- Never invent companion tables. Cite only tables visible in the "
-        "matches.\n"
+        "matches. TrinityCore has NO `_conditional`, `_conditional_or`, or "
+        "`_conditional_not` tables — all gating lives in the shared "
+        "`conditions` table.\n"
         "- Character DB and auth DB tables (character_*, account, battlenet_*, "
         "guild_*, arena_*, mail, pet_*) are OUT OF SCOPE — do not cite them "
         "even if a match contains them.\n"
@@ -693,12 +722,25 @@ def _format_repo_matches(result):
     return "\n".join(lines)
 
 
-def _build_system_prompt(mode, query=""):
+def _build_system_prompt(modes, query=""):
+    """modes is a list (from _detect_modes) or a single string."""
+    if isinstance(modes, str):
+        modes = [modes]
+
     parts = [SYSTEM_PROMPT]
 
-    rules = DOMAIN_RULES.get(mode)
-    if rules:
-        parts.append(f"DOMAIN HINTS:\n{rules}")
+    # Append DOMAIN HINTS for every applicable mode, deduplicated.
+    seen_rules = set()
+    rule_blocks = []
+    for m in modes:
+        if m in seen_rules:
+            continue
+        seen_rules.add(m)
+        rules = DOMAIN_RULES.get(m)
+        if rules:
+            rule_blocks.append(rules)
+    if rule_blocks:
+        parts.append("DOMAIN HINTS:\n" + "\n".join(rule_blocks))
 
     game_data = _load_game_data()
     if game_data:
@@ -708,7 +750,7 @@ def _build_system_prompt(mode, query=""):
     if query:
         repo_matches = _search_reference_repo(query)
 
-        if mode == "sql" and repo_matches and repo_matches.get("matches"):
+        if "sql" in modes and repo_matches and repo_matches.get("matches"):
             def _wrong_db(path):
                 pl = path.lower()
                 if not pl.endswith(".sql"):
@@ -731,6 +773,14 @@ def _build_system_prompt(mode, query=""):
 
 # =============================================================================
 # Thinking-block splitter + placeholder stripper
+#
+# Three regexes:
+#   _PLACEHOLDER_LINE     — annotation lines the model copies from the format
+#                           template ("- what to look at inside it")
+#   _PLACEHOLDER_ANGLED   — whole-line <...> blocks copied from OUTPUT FORMAT
+#   _INVENTED_TABLE       — lines citing _conditional* companion tables
+#                           (don't exist in TrinityCore; gating lives in the
+#                           shared `conditions` table)
 # =============================================================================
 
 _PLACEHOLDER_LINE = re.compile(
@@ -746,11 +796,30 @@ _PLACEHOLDER_LINE = re.compile(
     re.MULTILINE | re.IGNORECASE,
 )
 
+# Matches a whole line that is just an angle-bracket instruction copied from
+# the OUTPUT FORMAT block. Requires 20+ chars inside so a legitimate short
+# output like "<id not shown — ask user>" survives (that one is 24 chars, so
+# bump the threshold to 30 to be safe).
+_PLACEHOLDER_ANGLED = re.compile(
+    r"^[ \t]*<[^>\n]{30,}>[ \t]*$",
+    re.MULTILINE,
+)
+
+# Invented _conditional* companion tables. TrinityCore does not use a
+# per-table _conditional suffix; all gating is in the shared `conditions`
+# table. Drop any output line that references such a table.
+_INVENTED_TABLE = re.compile(
+    r"^.*\b\w+_conditional(?:_or|_not)?\b.*$",
+    re.MULTILINE,
+)
+
 
 def _strip_placeholders(text):
     if not text:
         return text
     out = _PLACEHOLDER_LINE.sub("", text)
+    out = _PLACEHOLDER_ANGLED.sub("", out)
+    out = _INVENTED_TABLE.sub("", out)
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out.strip()
 
@@ -956,8 +1025,9 @@ def generate():
     if not prompt:
         return jsonify({"error": "No prompt provided"}), 400
 
-    mode = _detect_mode(prompt)
-    system_prompt, repo_matches = _build_system_prompt(mode, query=prompt)
+    modes = _detect_modes(prompt)
+    primary_mode = modes[0]
+    system_prompt, repo_matches = _build_system_prompt(modes, query=prompt)
 
     matched_files = []
     if repo_matches and repo_matches.get("matches"):
@@ -972,7 +1042,8 @@ def generate():
         "refined": "",
         "reasoning": "",
         "status": "running",
-        "mode": mode,
+        "mode": primary_mode,
+        "mode_all": modes,
         "backend": None,
         "sources": matched_files,
         "search_source": search_source,
@@ -1022,8 +1093,9 @@ def generate_stream():
     if not prompt:
         return jsonify({"error": "No prompt provided"}), 400
 
-    mode = _detect_mode(prompt)
-    system_prompt, repo_matches = _build_system_prompt(mode, query=prompt)
+    modes = _detect_modes(prompt)
+    primary_mode = modes[0]
+    system_prompt, repo_matches = _build_system_prompt(modes, query=prompt)
 
     matched_files = []
     if repo_matches and repo_matches.get("matches"):
@@ -1037,7 +1109,8 @@ def generate_stream():
         "refined": "",
         "reasoning": "",
         "status": "running",
-        "mode": mode,
+        "mode": primary_mode,
+        "mode_all": modes,
         "backend": None,
         "sources": matched_files,
         "search_source": search_source,
