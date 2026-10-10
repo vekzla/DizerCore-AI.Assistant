@@ -22,17 +22,17 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError  
 from flask import (Flask, render_template, request, jsonify,  
                    send_from_directory, send_file)  
-from werkzeug.exceptions import HTTPException  
+from werkzeug.exceptions import HTTPException, RequestEntityTooLarge  
 # flask_cors intentionally not imported — the UI is same-origin only.  
 # Leaving CORS(app) in place was the C1 finding (Access-Control-Allow-Origin: *).  
 import psutil  
   
 app = Flask(__name__)  
   
-# Largest realistic Q4_K_M model upload ~1.5 GB. Was 4 GB (C2).  
-app.config["MAX_CONTENT_LENGTH"] = 1600 * 1024 * 1024  
+# Largest realistic Q4_K_M model upload ~2 GB (3B model). Was 1600 MB (sized for 1.5B).  
+app.config["MAX_CONTENT_LENGTH"] = 3072 * 1024 * 1024  
   
-MODEL = os.environ.get("MODEL_PATH", "/data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf")  
+MODEL = os.environ.get("MODEL_PATH", "/data/models/qwen2.5-3b-instruct-q4_k_m.gguf")  
 LLAMA_BIN = os.environ.get("LLAMA_BIN", "/data/llama.cpp/build/bin/llama-cli")  
 LLAMA_SERVER_URL = os.environ.get("LLAMA_SERVER_URL", "http://127.0.0.1:8080")  
 HISTORY_DIR = os.environ.get("HISTORY_DIR", "/data/prompt-history")  
@@ -42,7 +42,7 @@ LOGO_DIR = os.path.join(os.path.dirname(__file__), "static")
 GAME_DATA_FILE = os.path.join(os.path.dirname(__file__), "game-data.txt")  
 REFERENCE_DIR = os.environ.get("REFERENCE_DIR", "/data/reference")  
 INDEX_DB = os.environ.get("INDEX_DB", "/data/web-ui/dizercore-index.db")  
-ACTIVITY_FILE = os.environ.get("ACTIVITY_FILE", "/data/web-ui/.ai-activity")  
+ACTIVITY_FILE = os.environ.get("ACTIVITY_FILE", "/data/web-ui/.ai-activity")
 WATCHER_URL = os.environ.get("WATCHER_URL", "http://127.0.0.1:8091")  
 UPDATE_LOG = os.environ.get("UPDATE_LOG", "/var/log/dizercore-update.log")  
   
@@ -126,8 +126,8 @@ os.makedirs(LOGO_DIR, exist_ok=True)
 # =============================================================================  
 # Global error handler  
 # =============================================================================  
-  
-@app.errorhandler(Exception)  
+
+@app.errorhandler(Exception)
 def handle_exception(e):  
     if isinstance(e, HTTPException):  
         return e  
@@ -135,6 +135,11 @@ def handle_exception(e):
     app.logger.error("unhandled: %s", traceback.format_exc())  
     return jsonify({"error": str(e), "type": type(e).__name__}), 500  
   
+  
+@app.errorhandler(RequestEntityTooLarge)  
+def handle_too_large(e):  
+    limit_mb = app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024)  
+    return jsonify({"error": f"File exceeds the {limit_mb} MB upload limit"}), 413  
   
 # =============================================================================  
 # AI activity signalling — tells index-watcher.py when to pause  
