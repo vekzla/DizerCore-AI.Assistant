@@ -127,10 +127,10 @@ for bin in llama-server llama-quantize; do
 done
 
 # 9. Web UI files
-HDR "9/14: Web UI"
-if [[ -d /data/web-ui ]]; then
-  OK "/data/web-ui exists"
-for f in app.py indexer.py index-watcher.py game-data.txt requirements.txt; do  
+HDR "9/14: Web UI"  
+if [[ -d /data/web-ui ]]; then  
+  OK "/data/web-ui exists"  
+  for f in app.py indexer.py index-watcher.py game-data.txt requirements.txt; do  
     [[ -f "/data/web-ui/$f" ]] && OK "  $f" || FAIL "  $f missing"  
   done  
   # training-deploy.sh is installed to a root-owned location and the  
@@ -144,12 +144,12 @@ for f in app.py indexer.py index-watcher.py game-data.txt requirements.txt; do
   else  
     FAIL "  dizercore-training-deploy helper missing"  
   fi  
-  [[ -f /data/training/dataset-builder.py ]] && OK "  /data/training/dataset-builder.py" || WARN "  dataset-builder.py not deployed"
-  [[ -f /data/web-ui/templates/index.html ]] && OK "  templates/index.html" || FAIL "  templates/index.html missing"
-  [[ -f /data/web-ui/static/logo.png ]] && OK "  static/logo.png" || WARN "  static/logo.png missing"
-else
-  FAIL "/data/web-ui missing"
-fi
+  [[ -f /data/training/dataset-builder.py ]] && OK "  /data/training/dataset-builder.py" || WARN "  dataset-builder.py not deployed"  
+  [[ -f /data/web-ui/templates/index.html ]] && OK "  templates/index.html" || FAIL "  templates/index.html missing"  
+  [[ -f /data/web-ui/static/logo.png ]] && OK "  static/logo.png" || WARN "  static/logo.png missing"  
+else  
+  FAIL "/data/web-ui missing"  
+fi  
 curl -sf http://127.0.0.1:5000/ >/dev/null 2>&1 && OK "Web UI on :5000" || FAIL "Web UI not responding"
 
 # 10. Python venv
