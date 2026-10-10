@@ -14,6 +14,34 @@ Describe a problem → get a structured WoW prompt → copy it to any AI coding 
 
 ---
 
+## Threat Model  
+  
+DizerCore is designed for a **single-user Pi on a trusted LAN**. Read this  
+before exposing it anywhere else:  
+  
+- The Web UI requires a shared-secret token (`X-DizerCore-Token` header) on  
+  every `/api/*` request. The token is generated at install time and stored  
+  in `/data/web-ui/.api-token` (mode 600). The UI fetches it via  
+  `/api/token`, which browsers can only read same-origin — this is what  
+  stops cross-site request forgery.  
+- Anyone on the LAN who can read the token has full API access — including  
+  model deploy, index rebuild, and triggering a root-privileged  
+  `install.sh` re-run via `/api/update`.  
+- The token is **not** a defense against someone with shell access to the  
+  Pi — they can just read the file. It exists to stop CSRF and casual LAN  
+  probing.  
+- **Never port-forward port 5000** or put the Pi on an untrusted network.  
+  For remote access use SSH port-forwarding  
+  (`ssh -L 5000:127.0.0.1:5000 pi@<ip>`) or Tailscale.  
+- NOPASSWD sudo rules in `/etc/sudoers.d/dizercore-update` cover exactly  
+  two targets: `install.sh` (the update path) and  
+  `/usr/local/sbin/dizercore-training-deploy` (model swap). The deploy  
+  helper is root-owned; `install.sh` lives under the user-owned source  
+  dir, which is a known residual risk — see below.  
+- Plain HTTP, no TLS. Fine on a trusted LAN; don't send anything sensitive  
+  through the UI over a network you don't control.
+
+
 ## Install
 
 ```bash
@@ -471,7 +499,7 @@ If both show `/data/models/dizercore-q4_k_m.gguf`, the deploy worked — force-r
 
 ```bash
 sudo cat /etc/sudoers.d/dizercore-update
-# Should include: <your-user> ALL=(ALL) NOPASSWD: /data/web-ui/training-deploy.sh
+# Should include: <your-user> ALL=(ALL) NOPASSWD: /usr/local/sbin/dizercore-training-deploy
 ```
 
 **Prompt output references made-up schema**
