@@ -1,66 +1,110 @@
-<!-- DizerCore AI Assistant -->
-
 <div align="center">
 
 <img src="web-ui/static/DizerCoreYNoBGAI.png" alt="DizerCore AI Assistant" width="220">
 
-### AI Assistant
+# DizerCore AI Assistant
 
-Turn a Raspberry Pi 5 + NVMe into an offline prompt-engineering workstation for **World of Warcraft emulation**.
+**Turn a Raspberry Pi 5 + NVMe into an offline prompt-engineering workstation for World of Warcraft emulation.**
 
-Describe a problem → get a structured WoW prompt → copy it to any AI coding agent. No API keys, no cloud.
+Describe a problem → get a structured WoW prompt → paste it into any AI coding agent.
+
+*No API keys. No cloud. No telemetry.*
+
+[![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%205-c51a4a?style=flat-square)](https://www.raspberrypi.com/)
+[![Model](https://img.shields.io/badge/model-Qwen2.5-6236ff?style=flat-square)](https://huggingface.co/Qwen)
+[![Runtime](https://img.shields.io/badge/runtime-llama.cpp-8a2be2?style=flat-square)](https://github.com/ggerganov/llama.cpp)
+[![Web](https://img.shields.io/badge/interface-Flask-000000?style=flat-square)](https://flask.palletsprojects.com/)
 
 </div>
 
 ---
 
-## Table of Contents
+<div align="center">
 
-- [Requirements](#requirements)
-- [Install](#install)
-- [After Install](#after-install)
-- [Daily Use](#daily-use)
-- [Web UI Panels](#web-ui-panels)
-- [WoW Core Domain Routing](#wow-core-domain-routing)
-- [Architecture](#architecture)
-- [Threat Model](#threat-model)
-- [Custom Model Training](#custom-model-training)
-- [Self-Update](#self-update)
-- [Logging](#logging)
-- [System Audit](#system-audit)
-- [Reference Repo Auto-Sync](#reference-repo-auto-sync)
-- [Automatic Security Updates](#automatic-security-updates)
-- [Troubleshooting](#troubleshooting)
-- [Uninstall](#uninstall)
-- [Cheat Sheet](#cheat-sheet)
-- [Reference](#reference)
+📖 **[Install](#-install)** · **[Daily Use](#-daily-use)** · **[Training](#-custom-model-training)** · **[Threat Model](#-threat-model)** · **[Troubleshooting](#-troubleshooting)** · **[Cheat Sheet](#-cheat-sheet)**
+
+</div>
 
 ---
 
-## Requirements
+## 🧠 What It Is
 
-- Raspberry Pi 5 **8 GB**
-- NVMe SSD via M.2 HAT
-- Raspberry Pi OS 64-bit Lite
-- SSH + internet during install
-- **Active cooling** recommended if you plan to overclock
+DizerCore turns a Pi 5 into a **self-contained AI prompt refinery** for TrinityCore WoW server development. You describe a problem in plain language; the Pi searches your reference codebase, feeds the matched files to a local LLM, and returns a structured investigation prompt you can paste into a coding agent.
+
+Everything runs on the Pi. No data leaves the device.
+
 
 ---
 
-## Install
+## 🛡️ Threat Model
 
+> **Read this before exposing DizerCore to any network.**
+
+DizerCore is designed for a **single-user Raspberry Pi on a trusted LAN**.
+
+### Authentication
+
+- Every `/api/*` request requires a shared-secret token sent as the `X-DizerCore-Token` header.
+- The token is generated at install time and stored in `/data/web-ui/.api-token` (mode `600`).
+- The browser fetches it from `/api/token`, which is readable **same-origin only** — this is what stops CSRF.
+
+### What the token protects against — and what it doesn't
+
+| ✅ Protects against | ❌ Does NOT protect against |
+|---|---|
+| Cross-site request forgery | Anyone who can read `/data/web-ui/.api-token` |
+| Casual LAN probing | Anyone with shell access to the Pi |
+
+> **With the token**, an attacker has full API access — model deploy, index rebuild, and a root-privileged `install.sh` re-run via `/api/update`.
+
+### Network exposure
+
+| ✅ Do | ❌ Don't |
+|---|---|
+| Keep it on a trusted LAN | Port-forward port `5000` |
+| Use SSH port-forwarding for remote access | Put the Pi on an untrusted network |
+| Use Tailscale for cross-network access | Assume the token is secret |
+
+**SSH port-forward example:**
+```bash
+ssh -L 5000:127.0.0.1:5000 pi@<pi-ip>
+# Then open http://localhost:5000 in your browser
+```
+
+    raffic is plain HTTP — no TLS. Fine on a trusted LAN; don't send anything sensitive over a network you don't control.
+
+Sudo surface
+
+NOPASSWD rules live in /etc/sudoers.d/dizercore-update and cover exactly two targets:
+Target	Purpose	Owner	Risk
+/usr/local/sbin/dizercore-training-deploy	Model swap	root	Safe
+install.sh	Update path	user-owned source dir	Residual — see below
+
+The install.sh target is the residual risk: the Web UI user owns the source directory, so any code execution reaching the Web UI can overwrite install.sh and get root on the next /api/update. This is by design for an unauthenticated LAN appliance, but it means the Web UI must be trusted.
+📋 Requirements
+Component	Spec
+Board	Raspberry Pi 5 8 GB
+Storage	NVMe SSD via M.2 HAT
+OS	Raspberry Pi OS 64-bit Lite
+Network	SSH + internet during install
+Cooling	Active cooler recommended if overclocking
+📦 Install
+
+One command from a fresh Pi OS:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vekzla/DizerCore-AI.Assistant/main/bootstrap.sh -o /tmp/dca.sh && sudo bash /tmp/dca.sh
 ```
+Duration: ~15–30 minutes (most of it compiling llama.cpp)
 
-Takes ~15–30 minutes (most of it compiling llama.cpp). The installer runs inside a tmux session, so it survives SSH disconnects. You'll be attached automatically.
+The installer runs inside a tmux session so it survives SSH disconnects. You'll be attached automatically.
 
-    Why -o /tmp/dca.sh instead of | sudo bash?
+    💡 Why -o /tmp/dca.sh instead of | sudo bash?
+
     tmux needs a real terminal. Piping to bash makes stdin a pipe, which tmux can't use. Downloading first keeps stdin as your terminal.
 
 tmux controls
 Action	Keys
-Detach (leave install running)	Ctrl+B, then D
+Detach (leave install running)	Ctrl+B then D
 Reattach	tmux attach -t dizercore-install
 Kill the session	tmux kill-session -t dizercore-install
 What the Install Looks Like
@@ -92,8 +136,8 @@ Selected model: Qwen2.5-3B-Instruct (1.9 GB, ~3 tok/s)
 Overclock the Pi 5? [y/N]: y
 Profile [1]: 1
 [+] Applied conservative overclock — 2.6 GHz CPU, 850 MHz GPU
-[+] Note: the `dtparam=fan_temp*` curve in `config.txt` only drives the
-    official GPIO Active Cooler.
+[+] Note: the `dtparam=fan_temp*` curve in `config.txt` only drives
+    the official GPIO Active Cooler.
 
 ━━━ 8/10: Reference repository ━━━
 Git repository URL (leave blank to skip): https://github.com/vekzla/DizerCore-WoW.git
@@ -123,14 +167,14 @@ text
   Exit code: 0
 ═══════════════════════════════════════════════════════════════════
 
-After Install
+🚀 After Install
 bash
 
 # 1. Log out and back in (activates docker group)
 exit
 
 # 2. Reconnect, then verify
-groups         # should include "docker"
+groups          # should include "docker"
 
 # 3. Reboot if you chose an overclock profile
 sudo reboot
@@ -140,13 +184,13 @@ sudo reboot
 
 What You Get
 Service	URL	Purpose
-Web UI	http://<pi-ip>:5000	Prompt refinement, live stats, history, logs, index, system info, training
-Gitea	http://<pi-ip>:3000	Local Git server for your repos
-llama-server	http://127.0.0.1:8080	Persistent LLM endpoint (localhost only)
-index-watcher	http://127.0.0.1:8091	Background service that keeps the index fresh
+🌐 Web UI	http://<pi-ip>:5000	Prompt refinement, stats, history, logs, index, training
+📦 Gitea	http://<pi-ip>:3000	Local Git server for your repos
+🤖 llama-server	http://127.0.0.1:8080	Persistent LLM endpoint (localhost only)
+👁️ index-watcher	http://127.0.0.1:8091	Keeps the reference index fresh
 
 Everything else lives on the NVMe at /data.
-Daily Use
+☀️ Daily Use
 
     Open http://<pi-ip>:5000
 
@@ -156,30 +200,31 @@ Daily Use
 
     Wait ~3–5 seconds
 
-    Output shows a mode badge (CPP, SQL, SMART, OPCODE, DBC) and a source tag (FTS5 or RIPGREP)
+    Output shows a mode badge (CPP / SQL / SMART / OPCODE / DBC) and a source tag (FTS5 / RIPGREP)
 
     Click Copy
 
     Paste into your AI coding agent
 
 Every refinement is saved to /data/prompt-history/history.json.
-Web UI Panels
+🎛️ Web UI Panels
 Live Stats Bar
 
-Below the header, updated every 3 seconds:
+Updated every 3 seconds below the header:
 text
 
 CPU   ▓▓▓░░░░░░░░░░░  23%    RAM   ▓▓▓▓░░░░░░░░  26%    DISK  ▓░░░░░░░░░░░  10%
 TEMP  ▓▓▓▓▓░░░░░░░░  52°C    GPU   800 MHz
 
-Widget	Warn / Critical
-CPU	Yellow at 60%, red at 85%
-RAM	Yellow at 75%, red at 90%
-DISK	Yellow at 75%, red at 90%
-TEMP	Yellow at 65°C, red at 80°C
-GPU	Red ⚠ if throttling occurred or is active
+Widget	🟡 Warn	🔴 Critical
+CPU	60%	85%
+RAM	75%	90%
+DISK	75%	90%
+TEMP	65°C	80°C
+GPU	—	⚠ when throttled
 
-Hover any widget for detail. The bar pauses when the browser tab is hidden.
+    Hover any widget for detail. The bar pauses when the browser tab is hidden.
+
 Version Badge
 Badge	Meaning
 🟢 ✓ a3f9c12	Up to date with main
@@ -187,13 +232,33 @@ Badge	Meaning
 ⚪ ⚠ offline	Cannot reach GitHub
 System Info
 
-Grouped snapshot of every component: DizerCore commit, Docker, Gitea, PostgreSQL, llama.cpp, active model + RSS, reference repo, index stats, training state, history count.
+Grouped snapshot of every component:
+
+    DizerCore commit, Docker, Gitea, PostgreSQL
+
+    llama.cpp, active model + RSS
+
+    Reference repo, index stats
+
+    Training state, history count
+
 Logs
 
-Filterable installer log. Five filters (All, Installed, Skipped, Warnings, Errors) with live counts. Colour-coded lines. Download and Clear buttons.
+Filterable installer log with live counts. Five filters:
+
+    All · Installed · Skipped · Warnings · Errors
+
+Colour-coded lines. Download and Clear buttons.
 Index
 
-FTS5 index state: file count, size, last build, watcher status. Rebuild Now button. Option to index all SQL versions (larger, slower).
+FTS5 index state:
+
+    File count, size, last build, watcher status
+
+    Rebuild Now button
+
+    Option to index all SQL versions (larger, slower)
+
 Training
 
 Four states:
@@ -203,12 +268,12 @@ Dataset ready	Download Dataset + Rebuild
 Awaiting upload	File picker + Upload & Deploy
 Deployed	Revert to Base Model + Upload Different Model
 
-Training button colour:
+Training button colour indicates state:
 Colour	Meaning
 🟡 Yellow	Dataset exists, no trained model
 🟣 Purple	Trained model active
 🔴 Red	Error state
-WoW Core Domain Routing
+🗺️ WoW Core Domain Routing
 
 Auto-detects the domain of each prompt and applies a matching system prompt.
 Domain	Trigger Keywords	Focus
@@ -220,21 +285,20 @@ DBC	dbc, db2, client data, visual	Client data files
 Repo Search
 
 Before calling the model, the Web UI searches the reference repo for keywords from your input and injects matched file paths and snippets.
-
-    FTS5 index (primary) — SQLite full-text, ~50 ms
-
-    ripgrep (fallback) — direct scan, ~4.5 s
+Method	Latency	When used
+FTS5 index	~50 ms	Primary
+ripgrep	~4.5 s	Fallback
 
 The index-watcher.py service keeps the index fresh, checking every 5 minutes. It pauses while you're refining a prompt.
 Mode and Source Badges
 
 Every refined prompt shows two coloured badges:
 
-    Mode — CPP (green), SQL (blue), SMART (yellow), OPCODE (pink), DBC (purple)
+    Mode — CPP (🟢 green), SQL (🔵 blue), SMART (🟡 yellow), OPCODE (🩷 pink), DBC (🟣 purple)
 
-    Source — FTS5 (green), RIPGREP (yellow)
+    Source — FTS5 (🟢 green), RIPGREP (🟡 yellow)
 
-Architecture
+🏗️ Architecture
 text
 
 Browser → Web UI (Flask, port 5000)
@@ -243,9 +307,9 @@ Browser → Web UI (Flask, port 5000)
               │  2. Search index → matched files + snippets
               │  3. Build system prompt
               │
-              ├── POST to llama-server (port 8080)  ← fast path
+              ├── POST to llama-server (port 8080)   ← fast path
               │
-              └── fallback: llama-cli subprocess  ← slow path
+              └── fallback: llama-cli subprocess     ← slow path
 
 Background:
   index-watcher.py (port 8091)
@@ -254,50 +318,21 @@ Background:
     ├── Rebuilds training dataset on change
     └── Pauses while Web UI is running an AI task
 
-Threat Model
+🎓 Custom Model Training
 
-DizerCore is built for a single-user Raspberry Pi on a trusted LAN. Read this before exposing it anywhere else.
-Authentication
+Fine-tune whichever Qwen2.5 model is installed on the Pi. The dataset carries a meta row naming the base model — e.g. 3b-base → Qwen/Qwen2.5-3B-Instruct.
 
-    Every /api/* request requires a shared-secret token sent as the X-DizerCore-Token header.
+Runs once on Kaggle's free T4 GPU; produces a ~1–2 GB GGUF that replaces the base model.
 
-    The token is generated at install time and stored in /data/web-ui/.api-token (mode 600).
-
-    The browser fetches it from /api/token, which is readable same-origin only — this is what stops CSRF.
-
-What the token does and doesn't protect
-
-    Protects against: cross-site request forgery and casual LAN probing.
-
-    Does NOT protect against: anyone who can read the token file. With the token, an attacker has full API access — model deploy, index rebuild, and a root-privileged install.sh re-run via /api/update. Anyone with shell access to the Pi can simply read the file.
-
-Network exposure
-
-    Never port-forward port 5000 and never put the Pi on an untrusted network.
-
-    For remote access, use SSH port-forwarding (ssh -L 5000:127.0.0.1:5000 pi@<ip>) or Tailscale.
-
-    Traffic is plain HTTP — no TLS. Fine on a trusted LAN; don't send anything sensitive over a network you don't control.
-
-Sudo surface
-
-NOPASSWD rules live in /etc/sudoers.d/dizercore-update and cover exactly two targets:
-Target	Purpose	Owner
-/usr/local/sbin/dizercore-training-deploy	Model swap	root (safe)
-install.sh	Update path	user-owned source dir (residual risk)
-Custom Model Training
-
-Fine-tune whichever Qwen2.5 model is installed on the Pi. The dataset carries a meta row naming the base model — e.g. 3b-base → Qwen/Qwen2.5-3B-Instruct. Runs once on Kaggle's free T4 GPU; produces a ~1–2 GB GGUF that replaces the base model.
-
-Full walkthrough: training/README.md
+📖 Full walkthrough: training/README.md
 The Four Phases
-Phase	Where	Time
-1. Build dataset	Pi (Web UI)	2–5 min
-2. Train + convert	Kaggle notebook	~1–3 hours
-3. Upload GGUF	Pi (Web UI)	~1 min
-4. Test	Pi (Web UI)	instant
+#	Phase	Where	Time
+1	Build dataset	Pi (Web UI)	2–5 min
+2	Train + convert	Kaggle notebook	~1–3 hours
+3	Upload GGUF	Pi (Web UI)	~1 min
+4	Test	Pi (Web UI)	instant
 
-    If you switch models on the Pi, rebuild the dataset before retraining — the meta row must match the installed model, or the wrong base gets trained.
+    ⚠️ If you switch models on the Pi, rebuild the dataset before retraining. The meta row must match the installed model, or the wrong base gets trained.
 
 What Training Does
 
@@ -313,9 +348,7 @@ The LoRA adapter teaches the model WoW Core's patterns:
 
 Specific facts (like quest ID 94210) still come from FTS5 retrieval at inference time:
 
-    RAG = facts
-
-    LoRA = style
+    RAG = facts · LoRA = style
 
 Reverting
 
@@ -336,9 +369,11 @@ training/dataset-builder.py	Walks /data/reference/, produces JSONL
 training/dizercore-colab.ipynb	Kaggle training notebook (multi-cell)
 training/README.md	Step-by-step guide
 web-ui/training-deploy.sh	Privileged helper that swaps the active model
-Self-Update
+🔄 Self-Update
 
-The update runs in a detached systemd-run --unit=dizercore-update unit so it survives the prompt-gateway restart mid-update. Status is read from systemctl is-active dizercore-update plus /var/log/dizercore-update.log.
+Updates run in a detached systemd-run --unit=dizercore-update unit so they survive the prompt-gateway restart mid-update. Status is read from systemctl is-active dizercore-update plus /var/log/dizercore-update.log.
+
+Update sequence:
 
     git fetch origin main in /data/dizercore-src
 
@@ -356,7 +391,7 @@ Trained LoRA model	❌ preserved
 Gitea / PostgreSQL containers	❌ manual
 Docker Engine	❌ manual
 Overclock config	❌ set once
-Logging
+📝 Logging
 
 Every installer action is logged to /var/log/dizercore-install.log on the SD card (survives NVMe wipes).
 Tag	Meaning
@@ -365,9 +400,16 @@ Tag	Meaning
 [SKIP]	Already present
 [WARN]	Non-fatal issue
 [ERROR]	Fatal error
-Command	What you see
-grep '\[INSTALL\]' /var/log/dizercore-install.log	Everything set up
-grep '\[ERROR\]' /var/log/dizercore-install.log	Every failure
+
+Useful greps:
+bash
+
+# Everything set up
+grep '\[INSTALL\]' /var/log/dizercore-install.log
+
+# Every failure
+grep '\[ERROR\]' /var/log/dizercore-install.log
+
 Log Rotation (Optional)
 bash
 
@@ -381,7 +423,7 @@ sudo tee /etc/logrotate.d/dizercore > /dev/null <<'EOF'
 }
 EOF
 
-System Audit
+🔍 System Audit
 
 Read-only diagnostic. Checks every component and reports what's present, missing, or misconfigured.
 Run It
@@ -413,21 +455,24 @@ Marker	Meaning
 🟡 !	Present but non-standard
 Report File
 
-Saved to /tmp/dizercore-audit-YYYYMMDD-HHMMSS.txt. Pull it off with:
+Saved to /tmp/dizercore-audit-YYYYMMDD-HHMMSS.txt.
 bash
 
 scp <your-user>@<pi-ip>:/tmp/dizercore-audit-*.txt .
 
-The script is read-only. Safe to run any time.
-Reference Repo Auto-Sync
+    The script is read-only. Safe to run any time.
 
-The index-watcher service already checks every 5 minutes whether any file under /data/reference/ is newer than the index DB — and rebuilds the index + dataset automatically when it is. So the only scheduled job needed is a git pull; the watcher does the reindexing on its own. No manual trigger, no extra daemons.
+🔁 Reference Repo Auto-Sync
+
+The index-watcher service already checks every 5 minutes whether any file under /data/reference/ is newer than the index DB — and rebuilds the index + dataset automatically when it is.
+
+So the only scheduled job needed is a git pull; the watcher does the reindexing on its own. No manual trigger, no extra daemons.
 1. Make the log writeable
 bash
 
 sudo touch /var/log/dizercore-repo-sync.log && sudo chown $USER:$USER /var/log/dizercore-repo-sync.log
 
-2. Create the job
+2. Create the cron job
 bash
 
 crontab -e
@@ -437,7 +482,7 @@ cron
 
 0 */6 * * * cd /data/reference/DizerCore-WoW && git checkout master && git pull --ff-only origin master >> /tmp/dizercore-repo-sync.log 2>&1
 
-Automatic Security Updates
+🔒 Automatic Security Updates
 
 Security-only updates run via unattended-upgrades (Debian's standard tool — no cron needed, self-scheduled daily).
 bash
@@ -446,14 +491,16 @@ sudo apt update
 sudo apt install -y unattended-upgrades apt-listchanges
 sudo dpkg-reconfigure -plow unattended-upgrades   # select "Yes"
 
-Troubleshooting
+🔧 Troubleshooting
 Training button stays orange after upload
 bash
 
 sudo systemctl cat llama-server | grep -- "-m "
 curl -s http://127.0.0.1:8080/v1/models | python3 -m json.tool
 
-If both show /data/models/dizercore-q4_k_m.gguf, the deploy worked — force-refresh with Ctrl+Shift+R. If it still shows orange, check the sudoers rule:
+If both show /data/models/dizercore-q4_k_m.gguf, the deploy worked — force-refresh with Ctrl+Shift+R.
+
+If it still shows orange, check the sudoers rule:
 bash
 
 sudo cat /etc/sudoers.d/dizercore-update
@@ -503,13 +550,11 @@ bash
 
 vcgencmd get_throttled
 
-    0x0 = clean
-
-    0x50000 = throttled previously, not now
-
-    0x5 = actively throttled
-
-Uninstall
+Value	Meaning
+0x0	Clean
+0x50000	Throttled previously, not now
+0x5	Actively throttled
+🗑️ Uninstall
 bash
 
 curl -fsSL https://raw.githubusercontent.com/vekzla/DizerCore-AI.Assistant/main/uninstall.sh -o /tmp/dca-uninstall.sh
@@ -521,41 +566,41 @@ Flag	Effect
 --keep-docker	Leave Docker installed
 
 Or answer y at the wipe prompt when re-running the installer.
-Cheat Sheet
+📋 Cheat Sheet
 bash
 
-# Web UI
+# ── Web UI ──────────────────────────────────────────────
 sudo systemctl restart prompt-gateway
 sudo journalctl -u prompt-gateway -f
 
-# llama-server
+# ── llama-server ────────────────────────────────────────
 sudo systemctl status llama-server
 sudo systemctl restart llama-server
 curl -s http://127.0.0.1:8080/health
 
-# Index watcher
+# ── Index watcher ───────────────────────────────────────
 sudo systemctl status index-watcher
 sudo journalctl -u index-watcher -f
 
-# Game data
+# ── Game data ───────────────────────────────────────────
 nano /data/web-ui/game-data.txt
 
-# Gitea
+# ── Gitea ───────────────────────────────────────────────
 cd /data/gitea && docker compose ps
 
-# History
+# ── History ─────────────────────────────────────────────
 cat /data/prompt-history/history.json | jq '.[] | {mode, original}'
 
-# Training
+# ── Training ────────────────────────────────────────────
 ls -lh /data/training/
 ls -lh /data/models/dizercore-q4_k_m.gguf
 curl -s http://127.0.0.1:5000/api/training/status | python3 -m json.tool
 
-# Logs
+# ── Logs ────────────────────────────────────────────────
 tail -f /var/log/dizercore-install.log
 grep '\[ERROR\]' /var/log/dizercore-install.log
 
-# Live readings
+# ── Live readings ───────────────────────────────────────
 vcgencmd measure_temp
 vcgencmd measure_clock arm
 vcgencmd measure_clock v3d
@@ -563,11 +608,11 @@ vcgencmd get_throttled
 free -h
 df -h /data
 
-# Versions
+# ── Versions ────────────────────────────────────────────
 docker --version
 /data/llama.cpp/build/bin/llama-cli --version
 
-Reference
+📚 Reference
 Directory Map
 Path	Contents
 /data/gitea	Gitea config and repos
@@ -644,5 +689,6 @@ sudo bash /data/dizercore-src/install.sh
 <div align="center"><img src="web-ui/static/DizerCoreYNoBGAI.png" alt="DizerCore" width="80">
 
 Built by DizerCore AI Assistant
+
 Powered by llama.cpp · Qwen · Gitea · Flask
 </div> ```
