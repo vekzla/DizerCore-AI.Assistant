@@ -22,7 +22,7 @@ install_llama() {
   
   # ---------- build ----------  
   if [[ ! -f "build/bin/llama-cli" ]]; then  
-    cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON -DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16 -DLLAMA_CURL=ON  
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON -DLLAMA_CURL=ON  
     cmake --build build --config Release -j4  
     log "llama.cpp built successfully"  
   else  
@@ -50,8 +50,22 @@ install_llama() {
 }  
   
 # =============================================================================  
+# expected_model_sha256 — look up the pinned hash for a model filename in  
+# models.sha256 (repo root). Prints the hash, or nothing if unpinned.  
+# Format of models.sha256: "<filename>  <sha256>" one per line, # comments ok.  
+# =============================================================================  
+  
+expected_model_sha256() {  
+  local fname="$1"  
+  local sums_file="${REPO_ROOT}/models.sha256"  
+  [[ -f "$sums_file" ]] || return 0  
+  awk -v f="$fname" '$1 == f { print $2; exit }' "$sums_file"  
+}  
+  
+# =============================================================================  
 # download_model — fetch a GGUF via a .part file so interrupted runs can  
 # resume instead of restarting a 1 GB download from zero. Retries 3 times.  
+# Verifies SHA-256 when the model is pinned in models.sha256 (M2).  
 # =============================================================================  
   
 download_model() {  
@@ -59,8 +73,13 @@ download_model() {
   local dest="$2"  
   local tmp="${dest}.part"  
   local attempt  
+  local expected_sha  
+  expected_sha=$(expected_model_sha256 "$(basename "$dest")")  
   
   log "Downloading model from ${url}"  
+  if [[ -z "$expected_sha" ]]; then  
+    warn "No SHA-256 pin for $(basename "$dest") in models.sha256 — download is unverified (M2)"  
+  fi  
   
   for attempt in 1 2 3; do  
     # -c resumes $tmp if it exists; if the server ignores the range  
@@ -81,6 +100,19 @@ download_model() {
       warn "Attempt ${attempt}/3: file too small (${size_bytes} bytes)"  
       sleep 3  
       continue  
+    fi  
+  
+    # M2: verify integrity before promoting to the live path  
+    if [[ -n "$expected_sha" ]]; then  
+      local actual_sha  
+      actual_sha=$(sha256sum "$tmp" | awk '{print $1}')  
+      if [[ "$actual_sha" != "$expected_sha" ]]; then  
+        warn "Attempt ${attempt}/3: SHA-256 mismatch (got ${actual_sha})"  
+        rm -f "$tmp"  
+        sleep 3  
+        continue  
+      fi  
+      log "SHA-256 verified: ${actual_sha}"  
     fi  
   
     # Atomic promote — MODEL_FILE only ever holds a complete download  
@@ -116,25 +148,25 @@ select_model() {
     return 0  
   fi  
   
-  # ---------- interactive: show menu ----------    
-  echo ""    
-  echo -e "  ${BOLD}Choose the model to install${NC}"    
-  echo -e "  ${DIM}Larger models give better output but are slower on the Pi.${NC}"    
-  echo ""    
-    
-  local keys=()    
-  local i=1    
-  for entry in "${MODEL_REGISTRY[@]}"; do    
-    IFS='|' read -r key name size speed file url <<< "$entry"    
-    keys+=("$key")    
-    
-    local tags=""    
-    [[ "$key" == "$MODEL_DEFAULT_KEY" ]] && tags="${tags}  ${GREEN}★ recommended${NC}"    
-    [[ "$key" == "$saved_key" ]] && tags="${tags}  ${DIM}(currently installed)${NC}"    
-    
+  # ---------- interactive: show menu ----------  
+  echo ""  
+  echo -e "  ${BOLD}Choose the model to install${NC}"  
+  echo -e "  ${DIM}Larger models give better output but are slower on the Pi.${NC}"  
+  echo ""  
+  
+  local keys=()  
+  local i=1  
+  for entry in "${MODEL_REGISTRY[@]}"; do  
+    IFS='|' read -r key name size speed file url <<< "$entry"  
+    keys+=("$key")  
+  
+    local tags=""  
+    [[ "$key" == "$MODEL_DEFAULT_KEY" ]] && tags="${tags}  ${GREEN}★ recommended${NC}"  
+    [[ "$key" == "$saved_key" ]] && tags="${tags}  ${DIM}(currently installed)${NC}"  
+  
     printf "    ${GREEN}%d)${NC}  %-26s  %-8s  %-11s%b\n" "$i" "$name" "$size" "$speed" "$tags"  
-    i=$((i + 1))    
-  done
+    i=$((i + 1))  
+  done  
   
   echo ""  
   
