@@ -97,15 +97,6 @@ def _sql_path_allowed(path):
 
 # =============================================================================
 # API token auth (Phase 1 — C1/H5 fix)
-#
-# Every /api/* request must carry the X-DizerCore-Token header matching
-# ${WEB_UI_DIR}/.api-token, written by lib/05-webui.sh and exported via
-# API_TOKEN_FILE in prompt-gateway.service.
-#
-# /api/token is the ONE exempt endpoint: it exists so the same-origin page
-# can learn the token. Cross-origin pages can send a request to it but the
-# browser blocks them from reading the response (no CORS headers are sent).
-# Fails closed: if the token file is missing, all /api/* return 503.
 # =============================================================================
 
 API_TOKEN_FILE = os.environ.get("API_TOKEN_FILE",
@@ -151,7 +142,6 @@ os.makedirs(LOGO_DIR, exist_ok=True)
 def handle_exception(e):
     if isinstance(e, HTTPException):
         return e
-    # Full traceback goes to the journal only — not to the client (L6).
     app.logger.error("unhandled: %s", traceback.format_exc())
     return jsonify({"error": str(e), "type": type(e).__name__}), 500
 
@@ -163,7 +153,7 @@ def handle_too_large(e):
 
 
 # =============================================================================
-# AI activity signalling — tells index-watcher.py when to pause
+# AI activity signalling
 # =============================================================================
 
 _activity_lock = threading.Lock()
@@ -206,71 +196,157 @@ def _mark_ai_idle():
 # System prompt
 #
 # ONE unified persona. The first sentence MUST stay identical to the SYSTEM
-# constant in training/dizercore-colab.ipynb — the LoRA adapter is trained
-# on that exact persona, so runtime and training must match.
+# constant in the training notebook — the LoRA adapter is trained on that
+# exact persona, so runtime and training must match.
 #
-# _detect_mode() no longer selects a persona; it only picks which domain
-# hint lines get appended to this shared prompt.
+# The format block now uses a CONCRETE WORKED EXAMPLE instead of <angle-
+# bracket placeholder> syntax. The earlier placeholder form caused the model
+# to output the placeholders verbatim ("- what to look at inside it") and to
+# produce command lists instead of prose in PROMPT FOR NEXT AI. The worked
+# example also fixes the missing "Success: " line by showing it explicitly.
 #
-# Change 4: the anti-hallucination clause is now three imperative rules
-# instead of one soft "verify against schema" suggestion. The model was
-# inventing tables (character_account) and columns (entry on a quest table)
-# that don't exist in the reference schema.
+# DOMAIN KNOWLEDGE section embeds TrinityCore 12.1.0 Midnight facts:
+#   - Real file layout (src/server/game/, sql/old/12.x/world/)
+#   - Per-table primary-key columns (quest_template.ID, creature.guid, etc.)
+#   - Out-of-scope tables (character_*, account, battlenet_*)
+#   - Common investigation patterns by symptom
 # =============================================================================
 
 SYSTEM_PROMPT = """You are a software engineer building a TrinityCore WoW emulation server. You investigate issues and produce structured prompts listing which files/folders to check and what to verify — SQL or C++ code. You never write the fix itself.
 
-The user describes a problem. You respond with an investigation plan, NOT a fix.
+The user describes a problem. You respond with an investigation plan, NOT a fix. Your output is read by another AI coding agent — it must name real artifacts from the matched excerpts so the agent can act without guessing.
 
-OUTPUT FORMAT (use exactly these three section headers):
+OUTPUT FORMAT — use exactly these three section headers, in this order:
 
 FILES TO CHECK:
-1. <real file path — prefer paths from the matched files below>
-   - what to look at inside it
+1. <real path from the matched files below>
+   - <specific row, function, constant, or table+column to inspect — named concretely>
 2. <next file or folder>
-   - what to look at inside it
+   - <specific thing to verify inside it>
 
 WHAT TO VERIFY:
-- <specific check — a SQL query to run, a function behaviour to trace, a schema agreement to confirm>
+- <concrete check: a SQL query, a call site, a schema agreement>
 - <next check>
 
 PROMPT FOR NEXT AI:
-<A ready-to-paste paragraph for a follow-up AI. It names the exact file(s), function(s), table(s) and row id(s) discovered above, states what to inspect, and defines what "done" looks like. This is the deliverable — make it self-contained.>
+<one self-contained paragraph. Names the file(s), table(s), column(s), and row id(s) discovered above. States what to inspect. Ends with a line beginning "Success: " that states the observable in-game result.>
 
-RULES:
-- Name REAL files, tables, columns, functions, opcodes and constants from the matched excerpts. Never invent them
-- Never write the actual fix, the corrective SQL, or replacement C++ code
-- Never name a table or column that does not appear verbatim in the matched excerpts below
-- If a needed column name is not visible in the matches, write "<column not shown — verify against schema>" and stop
-- If you are unsure whether a companion table exists, do not guess it — list only tables that appear in the matches
-- End the PROMPT FOR NEXT AI block with a Success: line stating the observable in-game result"""
+WORKED EXAMPLE — match this level of specificity in every section:
+
+FILES TO CHECK:
+1. DizerCore-WoW/sql/old/12.x/world/2026_03_17_00_world.sql
+   - Rows inserting into quest_template where ID = 94210
+2. DizerCore-WoW/sql/old/12.x/world/creature_questender.sql
+   - Rows where id = 94210 linking a creature to the quest
+3. Search the repo for smart_scripts rows with entryorguid = 94210
+   - action_type = 58 (ADD_QUEST_CREDIT) with action_param1 = 94210
+
+WHAT TO VERIFY:
+- SELECT * FROM quest_template WHERE ID = 94210;
+- SELECT * FROM creature_questender WHERE id = 94210;
+- SELECT * FROM smart_scripts WHERE entryorguid = 94210 AND action_type = 58;
+- Confirm the quest_template_addon row exists for ID = 94210
+
+PROMPT FOR NEXT AI:
+Investigate quest 94210 in the world database. Run the SELECT queries under WHAT TO VERIFY and confirm each row exists with agreeing column values — especially creature_questender linking the correct creature as quest ender and smart_scripts action_type = 58 firing with action_param1 = 94210. Then check the conditions table for any SourceType = 20 or 31 rows gating the credit. If a row is missing, write the corrective INSERT; if a value disagrees, write the corrective UPDATE. Test in-game with .quest complete 94210.
+Success: the quest objectives for 94210 increment when the player fulfills the requirement.
+
+TRINITYCORE 12.1.0 MIDNIGHT — DOMAIN FACTS
+
+File layout:
+- C++ game logic: src/server/game/ (Spells/, Entities/, AI/SmartScripts/, Conditions/, Loot/, Globals/, DataStores/)
+- Packet structs: src/server/game/Server/Packets/*Packets.cpp
+- Opcode handlers: src/server/game/Handlers/*Handler.cpp
+- Opcode table: src/server/game/Server/Protocol/Opcodes.cpp
+- 12.x world SQL: sql/old/12.x/world/
+- 12.x incremental patches: sql/updates/12.x/
+- Base schema: sql/base/
+
+World-DB primary-key columns vary per table — never default to "entry":
+- quest_template → ID
+- quest_template_addon → ID
+- quest_objectives → ID
+- quest_poi → QuestID
+- creature_template → entry
+- creature → guid
+- gameobject → guid
+- smart_scripts → entryorguid
+- conditions → SourceEntry
+- spell_area → spell
+- spell_script_names → spell_id
+
+OUT OF SCOPE — never cite these, even if a match contains them:
+- character_*, account, battlenet_*, guild_*, arena_*, mail, pet_* tables
+- Any path containing /characters/ or /auth/
+
+Common investigation patterns:
+- Quest credit not firing → smart_scripts action_type=58 with action_param1=quest_id, gated by conditions SourceType=20 or 31
+- New quest → quest_template + quest_objectives + quest_poi + (creature_queststarter / creature_questender) + conditions
+- Creature not spawning → creature row, phaseMask, PhaseID, spawnMask
+- NPC won't gossip or quest → gossip_menu chain, creature_template.npcflag, conditions SourceType 13/14/20
+- Loot never drops → creature_loot_template.ChanceOrQuestChance, reference_loot_template chain, conditions SourceType=1
+- Spell scripting → spell_script_names row binding ScriptName, loaded via AddSC_* registration
+
+RULES — violating any of these makes the output unusable:
+
+1. Name REAL files, tables, columns, functions, opcodes, and constants from the matched excerpts. Never invent.
+2. Do NOT copy angle-bracket placeholder text from the format template above into your output. Every <…> is instructional — replace it with concrete content from the matches, or omit the line.
+3. PROMPT FOR NEXT AI must be a prose paragraph, NOT a command list. Console commands (.reload, .quest complete) may be mentioned inside the paragraph as part of a test step; they are not the section's content.
+4. Do NOT write the actual fix, corrective SQL, or replacement C++ code. You describe WHAT to check and WHAT to verify.
+5. If a needed column name is not visible in the matched excerpts, write "<column not shown — verify against schema>" and stop.
+6. End the PROMPT FOR NEXT AI section with exactly one line beginning "Success: " that states the observable in-game result."""
 
 # Per-domain rule lines appended to the shared prompt. _detect_mode() picks
 # ONE of these — the persona and output format never change.
 DOMAIN_RULES = {
     "cpp": (
-        "- Prefer files under src/server/game/ and name the real "
-        "Class::method when the matches show one\n"
-        "- List callers/early-exit paths as things to verify"
+        "- Game logic lives under src/server/game/ — prefer those paths\n"
+        "- Name the real Class::method when the matches show one\n"
+        "- Check declaration vs definition mismatch (header vs .cpp in the "
+        "same directory tree)\n"
+        "- List callers and early-exit paths as things to verify\n"
+        "- Packet structs live in src/server/game/Server/Packets/*Packets.cpp; "
+        "handlers in src/server/game/Handlers/*Handler.cpp"
     ),
     "sql": (
-        "- World DB tables: quest_template, quest_poi, quest_poi_points, "
-        "smart_scripts, creature_template, spell_area, conditions\n"
+        "- World DB tables: quest_template, quest_template_addon, "
+        "quest_objectives, quest_poi, quest_poi_points, smart_scripts, "
+        "creature_template, creature, spell_area, spell_script_names, "
+        "conditions\n"
+        "- Primary-key columns vary per table: quest_template.ID, "
+        "creature_template.entry, creature.guid, smart_scripts.entryorguid, "
+        "conditions.SourceEntry — never default to 'entry' for every table\n"
         "- There is NO generic 'status' column on quests — never suggest one\n"
-        "- 12.x quest/world data lives under sql/old/12.x/world/ — use real paths"
+        "- 12.x world SQL is under sql/old/12.x/world/ — use real paths\n"
+        "- Character DB / auth DB tables are OUT OF SCOPE (character_*, "
+        "account, battlenet_*, guild_*, arena_*, mail, pet_*)"
     ),
     "smart": (
-        "- Use SMART_ACTION_*, SMART_EVENT_*, SMART_TARGET_* constants only "
-        "when shown in the matches\n"
         "- smart_scripts columns: entryorguid, source_type, event_type, "
-        "action_type, action_param1-6, target_type"
+        "action_type, action_param1..6, target_type, target_param1..3\n"
+        "- Common actions: 1=TALK, 11=CAST, 12=SUMMON_CREATURE, "
+        "22=SET_EVENT_PHASE, 26=INC_EVENT_PHASE, 45=SET_DATA, "
+        "58=ADD_QUEST_CREDIT\n"
+        "- Common events: 0=UPDATE_IC, 1=UPDATE_OOC, 2=HEALTH_PCT, 4=AGGRO, "
+        "5=KILL, 19=ACCEPTED_QUEST, 22=TIMER, 25=RESET, "
+        "61=EVENT_PHASE_CHANGE\n"
+        "- Only cite SMART_* constants that appear in the matched excerpts"
     ),
     "opcode": (
-        "- Reference real CMSG_*/SMSG_*/MSG_* names and handler files\n"
-        "- If unsure of an opcode, say \"verify against Opcodes.h for 12.1.0\""
+        "- CMSG_* = client→server, SMSG_* = server→client\n"
+        "- Handlers live in src/server/game/Handlers/*Handler.cpp\n"
+        "- Packet structs in src/server/game/Server/Packets/*Packets.cpp\n"
+        "- Source of truth for opcode names: "
+        "src/server/game/Server/Protocol/Opcodes.cpp\n"
+        "- If unsure of an opcode name, say \"verify against Opcodes.cpp for "
+        "12.1.0\""
     ),
     "dbc": (
-        "- Reference actual DBC/DB2 file names and loader functions\n"
+        "- Store names in code: sSpellStore (Spell.dbc), sItemStore "
+        "(Item.db2), sMapStore (Map.db2), sAreaTableStore (AreaTable.db2)\n"
+        "- Loaders: LoadDBCStores() in "
+        "src/server/game/DataStores/DBCStores.cpp\n"
+        "- Structures: src/server/game/DataStores/DBCStructure.h\n"
         "- Never invent file structures or column layouts"
     ),
 }
@@ -295,7 +371,7 @@ def _load_game_data():
 
 
 # =============================================================================
-# Domain classifier — selects hint lines only, not a persona
+# Domain classifier
 # =============================================================================
 
 def _detect_mode(text):
@@ -332,7 +408,6 @@ _STOPWORDS = {
     "help", "need", "want", "please", "make", "get", "getting", "got",
     "all", "any", "some", "locate", "find", "check", "verify",
     "triggering", "firing", "opened", "opening",
-    # domain noise — appears in nearly every prompt and nearly every file
     "wow", "trinity", "trinitycore", "server", "player", "players",
     "npc", "npcs", "game", "world", "core", "code", "script", "scripts",
     "spell", "spells", "creature", "creatures", "item", "items",
@@ -358,7 +433,6 @@ def _extract_keywords(text, max_keywords=8):
 
 
 def _index_keyword_counts(conn, keywords):
-    """Per-keyword MATCH counts so we can pick the rarest as anchor."""
     counts = {}
     for kw in keywords:
         try:
@@ -373,18 +447,10 @@ def _index_keyword_counts(conn, keywords):
 
 
 # =============================================================================
-# FTS5 index — primary search path
+# FTS5 index
 # =============================================================================
 
 def _get_index_connection():
-    """
-    Open a fresh read-only SQLite connection to the FTS5 index.
-
-    Note: we do NOT cache the connection. SQLite connections are bound to
-    the thread that created them, and Flask serves each request on a
-    different worker thread. Opening a connection to a read-only SQLite
-    file costs ~1 ms — negligible compared to the FTS5 query itself.
-    """
     if not os.path.isfile(INDEX_DB):
         return None
     try:
@@ -409,8 +475,6 @@ def _search_via_index(query):
         return None
 
     def _run(fts_query):
-        # Change 1: over-fetch so the expansion filter doesn't leave us
-        # short, then reject SQL paths outside the supported expansions.
         raw = conn.execute(
             """
             SELECT path,
@@ -428,8 +492,6 @@ def _search_via_index(query):
     rows = []
     error = None
     try:
-        # Rare keywords anchor the search; common ones would match
-        # thousands of files and dilute bm25.
         counts = _index_keyword_counts(conn, keywords)
         informative = sorted(
             (k for k, n in counts.items()
@@ -438,14 +500,12 @@ def _search_via_index(query):
         )
 
         if informative:
-            # AND the two rarest; fall back to rarest alone
             if len(informative) >= 2:
                 rows = _run(" AND ".join(
                     f'"{k}"' for k in informative[:2]))
             if not rows:
                 rows = _run(f'"{informative[0]}"')
 
-        # Final fallback: plain OR over all keywords
         if not rows:
             rows = _run(" OR ".join(f'"{kw}"' for kw in keywords))
     except sqlite3.Error as e:
@@ -514,13 +574,11 @@ def _search_via_ripgrep(query):
     if not keywords:
         return None
 
-    # Search every repo under /data/reference (source repo + schema repo)
     keyword_files = {}
     for kw in keywords:
         files = []
         for repo in repos:
             for f in _ripgrep_files(kw, repo):
-                # Prefix with repo basename so paths match the FTS index
                 files.append(os.path.join(
                     os.path.basename(repo),
                     os.path.relpath(f, repo)))
@@ -551,7 +609,6 @@ def _search_via_ripgrep(query):
         if narrowed:
             candidate_files = narrowed
 
-    # Change 1: drop SQL paths outside the supported expansions.
     candidate_files = [f for f in candidate_files if _sql_path_allowed(f)]
 
     candidate_files.sort(key=_score_file_for_priority)
@@ -560,7 +617,6 @@ def _search_via_ripgrep(query):
     matches = []
     total_chars = 0
     for rel_prefixed in candidate_files:
-        # rel_prefixed is "<repo>/<rel>" — resolve it back to a real path
         repo_name, _, rel = rel_prefixed.partition("/")
         repo = os.path.join(REFERENCE_DIR, repo_name)
         full = os.path.join(repo, rel)
@@ -590,7 +646,6 @@ def _search_via_ripgrep(query):
 
 
 def _find_reference_repos():
-    """ALL git repos under REFERENCE_DIR (source repo + schema repo)."""
     if os.path.isdir(os.path.join(REFERENCE_DIR, ".git")):
         return [REFERENCE_DIR]
     repos = []
@@ -605,7 +660,6 @@ def _find_reference_repos():
 
 
 def _find_reference_repo():
-    """First repo — used only where a single display name is needed."""
     repos = _find_reference_repos()
     return repos[0] if repos else None
 
@@ -614,7 +668,6 @@ def _search_reference_repo(query):
     result = _search_via_index(query)
     if result is not None and result.get("matches"):
         return result
-    # FTS5 returned nothing (or errored) — try ripgrep
     fallback = _search_via_ripgrep(query)
     if fallback is not None:
         return fallback
@@ -632,13 +685,19 @@ def _format_repo_matches(result):
         lines.append(f"(matched on keyword: \"{kw}\")")
     for m in result["matches"]:
         lines.append(f"\n### {m['path']}\n{m['snippet']}")
-    # Change 4: harder anti-hallucination clause.
     lines.append(
-        "\nIMPORTANT: The files above are REAL excerpts from the user's "
-        "reference repo. Every table name, column name, and file path you "
-        "cite must appear in these excerpts verbatim. If a table or column "
-        "you need is not shown, write \"<not shown — verify against schema>\" "
-        "and stop. Never invent companion tables."
+        "\nIMPORTANT — READ CAREFULLY:\n"
+        "- The files above are REAL excerpts from the user's reference repo.\n"
+        "- Every file path, table name, and column name you cite MUST appear "
+        "in these excerpts verbatim.\n"
+        "- If a needed column is not shown, write \"<column not shown — verify "
+        "against schema>\" and stop.\n"
+        "- Never invent companion tables. Cite only tables visible in the "
+        "matches.\n"
+        "- Character DB and auth DB tables (character_*, account, battlenet_*, "
+        "guild_*, arena_*, mail, pet_*) are OUT OF SCOPE — do not cite them "
+        "even if a match contains them.\n"
+        "- PROMPT FOR NEXT AI is prose, not a command list."
     )
     return "\n".join(lines)
 
@@ -646,7 +705,6 @@ def _format_repo_matches(result):
 def _build_system_prompt(mode, query=""):
     parts = [SYSTEM_PROMPT]
 
-    # Domain hint lines — appended to the shared persona, never a replacement
     rules = DOMAIN_RULES.get(mode)
     if rules:
         parts.append(f"DOMAIN HINTS:\n{rules}")
@@ -659,10 +717,6 @@ def _build_system_prompt(mode, query=""):
     if query:
         repo_matches = _search_reference_repo(query)
 
-        # Change 5: in SQL mode, if every matched file is character-DB or
-        # auth-DB SQL, drop them. Those are the wrong domain for a
-        # world-content investigation and cause the model to anchor on
-        # character_* tables that don't exist in the reference schema.
         if mode == "sql" and repo_matches and repo_matches.get("matches"):
             def _wrong_db(path):
                 pl = path.lower()
@@ -686,11 +740,6 @@ def _build_system_prompt(mode, query=""):
 
 # =============================================================================
 # Thinking-block splitter
-#
-# _split_thinking() replaces the old _strip_thinking(). Reasoning content is
-# now preserved in a separate field so the UI can display it in a collapsible
-# panel. Empty reasoning is the common case — Qwen2.5-3B-Instruct does not
-# emit thinking blocks, but reasoning-capable models swapped in later will.
 # =============================================================================
 
 def _split_thinking(text):
@@ -702,7 +751,6 @@ def _split_thinking(text):
     reasoning_chunks = []
     answer = text
 
-    # Paired markers — extract and remove
     for pat in (
         re.compile(r"\[\s*Start thinking\s*\](.*?)\[\s*End thinking\s*\]",
                    re.DOTALL | re.IGNORECASE),
@@ -713,7 +761,6 @@ def _split_thinking(text):
             reasoning_chunks.append(m.group(1).strip())
         answer = pat.sub("", answer)
 
-    # Truncated markers — extract to end of text
     for pat in (
         re.compile(r"\[\s*Start thinking\s*\](.*)", re.DOTALL | re.IGNORECASE),
         re.compile(r"<\s*think\s*>(.*)", re.DOTALL | re.IGNORECASE),
@@ -723,8 +770,6 @@ def _split_thinking(text):
             reasoning_chunks.append(m.group(1).strip())
             answer = answer[:m.start()]
 
-    # Clean up leftover "Prompt:...Generation:..." blocks that some GGUF
-    # builds emit as metadata
     answer = re.sub(r"\[\s*Prompt:.*?Generation:.*?\]", "", answer,
                     flags=re.DOTALL)
     answer = re.sub(r"\[\s*Start thinking\s*\]", "", answer,
@@ -747,8 +792,6 @@ _history_lock = threading.Lock()
 
 
 def load_history():
-    """Read history.json. Returns [] on missing or corrupt file (M5) —
-    a corrupt file must not 500 every endpoint that touches history."""
     if not os.path.exists(history_file()):
         return []
     try:
@@ -760,8 +803,6 @@ def load_history():
 
 
 def save_history(history):
-    """Atomic write — tmp file + os.replace, so a crash mid-write never
-    leaves a truncated history.json (M5)."""
     tmp = history_file() + ".tmp"
     with open(tmp, "w") as f:
         json.dump(history, f, indent=2)
@@ -769,8 +810,6 @@ def save_history(history):
 
 
 def append_history(entry):
-    """H1: lock + re-read + append + write. Concurrent /api/generate
-    requests no longer overwrite each other's entries."""
     with _history_lock:
         history = load_history()
         history.append(entry)
@@ -778,8 +817,6 @@ def append_history(entry):
 
 
 def update_history_entry(entry_id, fields):
-    """H1: lock + re-read + patch by id + write. The generate worker calls
-    this instead of mutating a list captured before the thread ran."""
     with _history_lock:
         history = load_history()
         for e in history:
@@ -825,8 +862,7 @@ def _generate_via_server(prompt, system_prompt, max_tokens=GENERATE_MAX_TOKENS):
 
 
 def _stream_via_server(prompt, system_prompt, max_tokens=GENERATE_MAX_TOKENS):
-    """Generator yielding text chunks from llama-server's SSE stream.
-    Zero extra Pi cost — same tokens generated, forwarded as they arrive."""
+    """Generator yielding text chunks from llama-server's SSE stream."""
     body = json.dumps({
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -897,7 +933,7 @@ def static_files(filename):
 
 
 # =============================================================================
-# Generate — blocking endpoint (kept for fallback and history)
+# Generate — blocking (fallback + history)
 # =============================================================================
 
 @app.route("/api/generate", methods=["POST"])
@@ -928,7 +964,6 @@ def generate():
         "sources": matched_files,
         "search_source": search_source,
     }
-    # H1: append under the lock instead of mutating a pre-read snapshot.
     append_history(entry)
     entry_id = entry["id"]
 
@@ -957,7 +992,6 @@ def generate():
             fields["status"] = "error"
         finally:
             _mark_ai_idle()
-        # H1: patch the stored entry by id — never re-save the captured list.
         update_history_entry(entry_id, fields)
 
     threading.Thread(target=run, daemon=True).start()
@@ -965,7 +999,7 @@ def generate():
 
 
 # =============================================================================
-# Generate — streaming endpoint (SSE)
+# Generate — streaming (SSE)
 # =============================================================================
 
 @app.route("/api/generate/stream", methods=["POST"])
@@ -1013,7 +1047,6 @@ def generate_stream():
                 accumulated += delta
                 reasoning, answer = _split_thinking(accumulated)
 
-                # Only emit snapshots when something changed
                 if reasoning != last_reasoning or answer != last_answer:
                     last_reasoning = reasoning
                     last_answer = answer
@@ -1023,7 +1056,6 @@ def generate_stream():
                     }) + "\n\n")
 
             if backend is None:
-                # llama-server unreachable — fall back to subprocess (blocking)
                 output = _generate_via_cli(prompt, system_prompt)
                 backend = "llama-cli"
                 accumulated = output or ""
@@ -1138,8 +1170,6 @@ def index_status():
         except Exception as e:
             index_error = str(e)
         finally:
-            # L11: close unconditionally — was only closed on the success path,
-            # leaking the connection whenever execute() raised.
             if conn is not None:
                 conn.close()
     mtime = None
@@ -1251,7 +1281,6 @@ def upload_logo():
     f = request.files["logo"]
     if not f.filename:
         return jsonify({"error": "No filename"}), 400
-    # C2: cap logo uploads well below the global limit — it's an image.
     if (request.content_length or 0) > 5 * 1024 * 1024:
         return jsonify({"error": "Logo too large (5 MB max)"}), 413
     ext = os.path.splitext(f.filename)[1].lower()
@@ -1314,9 +1343,7 @@ def get_version():
 
 
 # =============================================================================
-# Update runner — install.sh re-execs itself into a detached systemd unit so
-# the update survives the prompt-gateway restart that happens mid-install.
-# Status is read from the on-disk log + systemctl, not in-memory state.
+# Update runner
 # =============================================================================
 
 _update_lock = threading.Lock()
@@ -1355,9 +1382,6 @@ def start_update():
                 f.write("")
         except OSError:
             pass
-        # NOTE: sudo's env_reset strips DIZERCORE_UPDATE=1 — pass the flags
-        # through `env` inside the sudo command so install.sh sees them and
-        # self-detaches into the dizercore-update systemd unit.
         try:
             r = subprocess.run(
                 ["sudo", "-n", "env", "DIZERCORE_UPDATE=1",
@@ -1365,8 +1389,6 @@ def start_update():
                  "/bin/bash", os.path.join(SRC_DIR, "install.sh")],
                 cwd=SRC_DIR, capture_output=True, text=True, timeout=30)
         except subprocess.TimeoutExpired:
-            # sudo may be killed mid-detach — check whether the unit actually
-            # registered before reporting failure.
             if _update_unit_active():
                 _remote_cache["checked_at"] = 0
                 return jsonify({"status": "started"})
@@ -1474,7 +1496,6 @@ def _collect_system_info():
         errors.append(f"rss: {e}")
         info["llama_server_rss"] = None
 
-    # ---------- Active model (parses ExecStart with line continuations) ----------
     try:
         service_file = "/etc/systemd/system/llama-server.service"
         active_model = None
@@ -1513,7 +1534,6 @@ def _collect_system_info():
             info["index_size"] = f"{os.path.getsize(INDEX_DB) / (1024*1024):.0f} MB"
             conn = _get_index_connection()
             try:
-                # L11: close unconditionally — was only closed on success.
                 if conn is not None:
                     info["index_files"] = conn.execute(
                         "SELECT count(*) FROM files").fetchone()[0]
@@ -1530,9 +1550,6 @@ def _collect_system_info():
         info["index_size"] = None
         info["index_files"] = None
 
-    # Watcher state — WATCHER_TIMEOUT keeps this working while a build
-    # saturates the CPU (was timeout=1, which reported a live busy
-    # watcher as "down").
     try:
         with urlopen(f"{WATCHER_URL}/status", timeout=WATCHER_TIMEOUT) as r:
             w = json.loads(r.read())
@@ -1542,7 +1559,6 @@ def _collect_system_info():
         info["watcher"] = "down"
         info["watcher_last_build"] = None
 
-    # AI busy flag
     try:
         if os.path.isfile(ACTIVITY_FILE):
             with open(ACTIVITY_FILE) as f:
@@ -1553,7 +1569,6 @@ def _collect_system_info():
     except Exception:
         info["ai_busy"] = "unknown"
 
-    # Training state
     try:
         if os.path.isfile(DATASET_FILE):
             info["training_dataset"] = f"{os.path.getsize(DATASET_FILE) / (1024*1024):.1f} MB"
@@ -1781,8 +1796,6 @@ def clear_log():
 
 # =============================================================================
 # Training endpoints
-# (formerly the web-ui/training.py blueprint — inlined after that file was
-#  removed; it only ever contained a stale copy of dataset-builder.py)
 # =============================================================================
 
 TRAINING_DEPLOY_SCRIPT = "/usr/local/sbin/dizercore-training-deploy"
@@ -1793,7 +1806,6 @@ _build_lock = threading.Lock()
 
 
 def _active_model_path():
-    """Parse the -m arg out of llama-server.service ExecStart."""
     service_file = "/etc/systemd/system/llama-server.service"
     try:
         with open(service_file) as f:
@@ -1810,8 +1822,6 @@ def _active_model_path():
 
 
 def _dataset_info():
-    """Dataset stats. Example count is cached in a .count sidecar so we don't
-    re-read a multi-GB JSONL on every UI poll."""
     info = {"exists": False, "size": 0, "count": 0, "mtime": None}
     if not os.path.isfile(DATASET_FILE):
         return info
@@ -1876,12 +1886,10 @@ def training_build_dataset():
                 )
                 for line in iter(proc.stdout.readline, ""):
                     _build_state["log"] += line
-                    # cap the in-memory log at ~200 KB
                     if len(_build_state["log"]) > 200000:
                         _build_state["log"] = _build_state["log"][-100000:]
                 proc.wait()
                 _build_state["exit_code"] = proc.returncode
-                # invalidate the cached count so status reflects the new file
                 try:
                     os.remove(DATASET_FILE + ".count")
                 except OSError:
@@ -1920,10 +1928,6 @@ def training_upload_model():
     os.makedirs(os.path.dirname(TRAINED_MODEL), exist_ok=True)
     tmp = TRAINED_MODEL + ".part"
     try:
-        # C2: validate the GGUF magic off the upload's own stream BEFORE
-        # writing anything to disk. Must read f.stream — NOT request.stream,
-        # which is already consumed by the request.files access above.
-        # A bogus request is rejected after 4 bytes, not after a full write.
         up = f.stream
         if up.read(4) != b"GGUF":
             return jsonify({"error": "Not a valid GGUF file"}), 400
