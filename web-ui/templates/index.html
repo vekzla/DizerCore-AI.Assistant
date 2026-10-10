@@ -235,6 +235,60 @@
     max-height: 320px;
   }
 
+  /* Feedback row under the output */
+  .feedback-row {
+    margin-top: 12px;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+  .feedback-row input[type="text"] {
+    flex: 1;
+    min-width: 200px;
+    padding: 8px 12px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-family: inherit;
+  }
+  .feedback-row input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .feedback-row button {
+    padding: 6px 14px;
+    font-size: 0.82rem;
+  }
+  .feedback-row button.good {
+    border-color: var(--green);
+    color: var(--green);
+  }
+  .feedback-row button.good:hover { background: rgba(63,185,80,0.12); }
+  .feedback-row button.bad {
+    border-color: var(--red);
+    color: var(--red);
+  }
+  .feedback-row button.bad:hover { background: rgba(248,81,73,0.12); }
+
+  /* Verification banner — appears when the retry succeeded or failed */
+  .verify-banner {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-family: monospace;
+  }
+  .verify-banner.retry {
+    background: rgba(210,153,34,0.12);
+    color: var(--yellow);
+    border-left: 3px solid var(--yellow);
+  }
+  .verify-banner.failed {
+    background: rgba(248,81,73,0.12);
+    color: var(--red);
+    border-left: 3px solid var(--red);
+  }
+
   .sources-row {
     display: flex;
     flex-wrap: wrap;
@@ -705,11 +759,22 @@
       </div>
       <pre id="output"></pre>
 
+      <!-- Verification banner: appears when the retry ran -->
+      <div class="verify-banner retry" id="verify-banner" style="display:none;"></div>
+
       <!-- Reasoning panel — shown only when the model produces a thinking block -->
       <details id="output-reasoning-wrap" style="display:none;">
         <summary>Reasoning (model's internal thinking)</summary>
         <pre id="output-reasoning"></pre>
       </details>
+
+      <!-- Feedback row — captures 👍/👎 + optional correction -->
+      <div class="feedback-row" id="feedback-row" style="display:none;">
+        <button class="good" onclick="sendFeedback('good')" title="Good — no correction needed">👍 Good</button>
+        <button class="bad" onclick="sendFeedback('bad')" title="Bad — enter correction below">👎 Bad</button>
+        <input type="text" id="feedback-text" placeholder="Optional: what was wrong? (e.g. 'creature_questender has no entry column, use quest')">
+        <span id="feedback-status" style="font-size:0.78rem;color:var(--gray);"></span>
+      </div>
 
       <div class="sources-row" id="output-sources" style="display:none;"></div>
     </div>
@@ -878,7 +943,8 @@
       <div class="training-state" id="training-state-nodataset">
         <h4><span class="step-num">1</span> Build Training Dataset</h4>
         <p>Walk the reference repo and produce a JSONL dataset with thousands of
-           instruction/response pairs. This runs on the Pi and takes 2–5 minutes.</p>
+           instruction/response pairs. This runs on the Pi and takes 2–5 minutes.
+           User feedback collected in the Web UI is merged into the output.</p>
         <div class="actions">
           <button class="purple" id="training-build-btn" onclick="buildDataset()">Build Dataset</button>
         </div>
@@ -889,8 +955,8 @@
 
       <div class="training-state" id="training-state-dataset">
         <h4><span class="step-num">2</span> Train + Convert</h4>
-        <p>Upload the dataset to Google Drive, open the Colab notebook, and run all cells.
-           Training takes ~2 hours on a T4 GPU.</p>
+        <p>Upload the dataset to Kaggle, open the DDP notebook, and run all cells.
+           Training takes ~2.5 hours on 2×T4.</p>
         <div class="training-stats">
           <div class="training-stat">
             <div class="label">Examples</div>
@@ -907,24 +973,23 @@
         </div>
         <div class="actions">
           <button onclick="downloadDataset()">Download Dataset</button>
-          <a href="https://colab.research.google.com/github/vekzla/DizerCore-AI.Assistant/blob/main/training/dizercore-colab.ipynb"
-             target="_blank" rel="noopener" style="text-decoration:none;">
-            <button class="purple">Open Colab Notebook ↗</button>
+          <a href="https://www.kaggle.com/code" target="_blank" rel="noopener" style="text-decoration:none;">
+            <button class="purple">Open Kaggle Notebook ↗</button>
           </a>
           <button onclick="buildDataset()" style="margin-left:auto;">Rebuild</button>
         </div>
         <div class="note">
-          1. Upload <code>dizercore-dataset.jsonl</code> to <code>MyDrive/dizercore/</code><br>
-          2. Open the Colab notebook above<br>
-          3. Runtime → Change runtime type → T4 GPU<br>
-          4. Run all. Wait ~2 hours.<br>
-          5. Download <code>dizercore-q4_k_m.gguf</code> from Drive.
+          1. Upload <code>dizercore-dataset.jsonl</code> to Kaggle as a new version<br>
+          2. Open the DDP notebook<br>
+          3. Settings → Accelerator → T4 ×2<br>
+          4. Save Version → Save &amp; Run All (Commit). Wait ~2.5 hours.<br>
+          5. Download <code>dizercore-q4_k_m.gguf</code> from the Output panel.
         </div>
       </div>
 
       <div class="training-state" id="training-state-upload">
         <h4><span class="step-num">3</span> Upload Trained Model</h4>
-        <p>Upload the GGUF file that Colab produced. The Pi will validate it,
+        <p>Upload the GGUF file that Kaggle produced. The Pi will validate it,
            deploy it, and restart the model server.</p>
         <label class="file-picker" for="training-file-input">
           <div class="icon">📁</div>
@@ -957,6 +1022,10 @@
           <div class="training-stat">
             <div class="label">Trained model size</div>
             <div class="value" id="ttrained-size">--</div>
+          </div>
+          <div class="training-stat">
+            <div class="label">Feedback captured</div>
+            <div class="value" id="tfeedback-count">--</div>
           </div>
         </div>
         <div class="actions">
@@ -1016,9 +1085,10 @@ function copyToClipboard(text) {
 }
 
 let pollTimer = null;
+let _currentEntryId = null;
 
 // =============================================================================
-// Reasoning panel helpers
+// Reasoning panel + verification banner helpers
 // =============================================================================
 function setReasoning(text) {
   const wrap = document.getElementById('output-reasoning-wrap');
@@ -1031,6 +1101,75 @@ function setReasoning(text) {
   }
   wrap.style.display = 'block';
   el.textContent = text;
+}
+
+function setVerification(verify, retried) {
+  const banner = document.getElementById('verify-banner');
+  if (!verify || verify.ok) {
+    if (retried) {
+      banner.className = 'verify-banner retry';
+      banner.textContent = 'Note: first draft cited non-existent artifacts; the model was asked to rewrite.';
+      banner.style.display = 'block';
+    } else {
+      banner.style.display = 'none';
+      banner.textContent = '';
+    }
+    return;
+  }
+  // verify.ok is false → retry either failed or wasn't attempted
+  const names = (verify.issues || []).slice(0, 5)
+    .map(i => i.name).join(', ');
+  banner.className = 'verify-banner failed';
+  banner.textContent = `Verification still failing (${(verify.issues || []).length} issue${(verify.issues || []).length === 1 ? '' : 's'}): ${names}`;
+  banner.style.display = 'block';
+}
+
+function showFeedbackRow() {
+  document.getElementById('feedback-row').style.display = 'flex';
+  document.getElementById('feedback-text').value = '';
+  document.getElementById('feedback-status').textContent = '';
+}
+
+// =============================================================================
+// Feedback submission
+// =============================================================================
+async function sendFeedback(verdict) {
+  if (!_currentEntryId) {
+    toast('No current entry to rate', true);
+    return;
+  }
+  const correction = document.getElementById('feedback-text').value.trim();
+  if (verdict === 'bad' && !correction) {
+    // Allow empty correction — the user may just want to mark bad.
+    // But confirm so they don't lose the chance to add one.
+    if (!confirm('Submit 👎 without a written correction? You can add one next time for the model to learn from.')) {
+      return;
+    }
+  }
+  try {
+    const res = await fetch('/api/feedback', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        id: _currentEntryId,
+        verdict: verdict,
+        correction: correction,
+      }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      document.getElementById('feedback-status').textContent =
+        d.error || 'failed';
+      toast(d.error || 'Feedback failed', true);
+      return;
+    }
+    document.getElementById('feedback-status').textContent =
+      verdict === 'good' ? 'marked good ✓' : 'correction saved ✓';
+    toast(verdict === 'good' ? 'Marked good' : 'Correction saved');
+    document.getElementById('feedback-text').value = '';
+  } catch (e) {
+    toast('Feedback failed: ' + e, true);
+  }
 }
 
 // =============================================================================
@@ -1050,7 +1189,11 @@ async function generate() {
   outputSection.style.display = 'block';
   outputEl.textContent = 'Connecting...';
   setReasoning('');
+  setVerification(null, false);
+  document.getElementById('feedback-row').style.display = 'none';
   showMode(null, [], null);
+
+  _currentEntryId = null;
 
   try {
     const res = await fetch('/api/generate/stream', {
@@ -1066,13 +1209,13 @@ async function generate() {
     const decoder = new TextDecoder();
     let buf = '';
     let metaReceived = false;
+    let retried = false;
 
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
 
-      // Split SSE events on blank-line delimiters
       let sep;
       while ((sep = buf.indexOf('\n\n')) >= 0) {
         const chunk = buf.slice(0, sep);
@@ -1085,6 +1228,7 @@ async function generate() {
 
           if (obj.meta) {
             metaReceived = true;
+            _currentEntryId = obj.meta.id;
             showMode(obj.meta.mode, obj.meta.sources, obj.meta.search_source);
             outputEl.textContent = '';
           }
@@ -1094,12 +1238,18 @@ async function generate() {
           if (obj.answer !== undefined) {
             outputEl.textContent = obj.answer || '';
           }
+          if (obj.verification_retry) {
+            retried = true;
+          }
           if (obj.done) {
             if (obj.refined !== undefined) {
               outputEl.textContent = obj.refined;
             }
             if (obj.reasoning) {
               setReasoning(obj.reasoning);
+            }
+            if (obj.verification) {
+              setVerification(obj.verification, retried);
             }
           }
           if (obj.error) {
@@ -1112,8 +1262,8 @@ async function generate() {
     if (!metaReceived) {
       outputEl.textContent = '(empty stream — check llama-server)';
     }
+    showFeedbackRow();
   } catch (e) {
-    // Stream failed — fall back to the blocking endpoint + poll
     outputEl.textContent = 'Stream failed: ' + (e.message || e) +
       '\n\nFalling back to polling...';
     try {
@@ -1123,6 +1273,7 @@ async function generate() {
         body: JSON.stringify({ prompt })
       });
       const entry = await res2.json();
+      _currentEntryId = entry.id;
       showMode(entry.mode, entry.sources, entry.search_source);
       pollEntry(entry.id);
     } catch (e2) {
@@ -1176,7 +1327,11 @@ function pollEntry(id) {
       pollTimer = null;
       document.getElementById('output').textContent = entry.refined || '(no output)';
       setReasoning(entry.reasoning || '');
+      if (entry.verification) {
+        setVerification(entry.verification, false);
+      }
       showMode(entry.mode, entry.sources, entry.search_source);
+      showFeedbackRow();
       loadHistory();
     }
   }, 2000);
@@ -1204,16 +1359,24 @@ async function loadHistory() {
 async function showEntry(id) {
   const res = await fetch(`/api/history/${id}`);
   const entry = await res.json();
+  _currentEntryId = entry.id;
   document.getElementById('output-section').style.display = 'block';
   document.getElementById('output').textContent = entry.refined || '(no output yet)';
   setReasoning(entry.reasoning || '');
+  if (entry.verification) {
+    setVerification(entry.verification, false);
+  } else {
+    setVerification(null, false);
+  }
   showMode(entry.mode, entry.sources, entry.search_source);
+  showFeedbackRow();
 }
 
 async function clearHistory() {
   await fetch('/api/history/clear', { method: 'POST' });
   loadHistory();
   document.getElementById('output-section').style.display = 'none';
+  _currentEntryId = null;
   toast('History cleared');
 }
 
@@ -1253,7 +1416,15 @@ async function uploadLogo(input) {
   toast('Logo updated');
 }
 
-function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function toast(msg, isError) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -1264,8 +1435,6 @@ function toast(msg, isError) {
 
 // =============================================================================
 // Authenticated file download helper
-// window.location.href navigations cannot send X-DizerCore-Token, so GET
-// downloads go through fetch -> blob -> object URL instead.
 // =============================================================================
 async function downloadApiFile(url, filename) {
   const res = await fetch(url);
@@ -1441,10 +1610,12 @@ async function loadSysInfo() {
       <tr><td>Last index build</td><td>${fmt(d.watcher_last_build)}</td></tr>
       <tr><td>AI busy</td><td>${fmt(d.ai_busy)}</td></tr>
 
-      <tr class="section-row"><td colspan="2">Training</td></tr>
+      <tr class="section-row"><td colspan="2">Training &amp; Feedback</td></tr>
       <tr><td>Dataset examples</td><td>${fmt(d.training_dataset_examples)}</td></tr>
       <tr><td>Dataset size</td><td>${fmt(d.training_dataset)}</td></tr>
       <tr><td>Trained model</td><td>${fmt(d.trained_model)}</td></tr>
+      <tr><td>Feedback entries</td><td>${fmt(d.feedback_total)}</td></tr>
+      <tr><td>Written corrections</td><td>${fmt(d.feedback_corrections)}</td></tr>
 
       <tr class="section-row"><td colspan="2">Usage</td></tr>
       <tr><td>History entries</td><td>${fmt(d.history_count)}</td></tr>
@@ -1747,6 +1918,18 @@ async function loadTrainingStatus() {
       showTrainingState('nodataset');
       setTrainingDot('warn');
     }
+
+    // Pull feedback counters into the deployed tab if present
+    try {
+      const fbres = await fetch('/api/feedback/stats');
+      if (fbres.ok) {
+        const fbd = await fbres.json();
+        const el = document.getElementById('tfeedback-count');
+        if (el) {
+          el.textContent = `${fbd.corrections || 0} / ${fbd.total || 0}`;
+        }
+      }
+    } catch (e) { /* not fatal */ }
   } catch (e) {
     status.textContent = 'error';
     status.className = 'status error';
