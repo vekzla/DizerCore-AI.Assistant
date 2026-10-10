@@ -623,10 +623,8 @@ def _build_system_prompt(mode, query=""):
         if formatted:  
             parts.append(formatted)  
   
-    return "\n\n".join(parts), repo_matches  
-  
-  
-# =============================================================================  
+    return "\n\n".join(parts), repo_matches
+  # =============================================================================  
 # Thinking-block stripper  
 # =============================================================================  
   
@@ -655,16 +653,50 @@ def history_file():
     return os.path.join(HISTORY_DIR, "history.json")  
   
   
+_history_lock = threading.Lock()  
+  
+  
 def load_history():  
-    if os.path.exists(history_file()):  
+    """Read history.json. Returns [] on missing or corrupt file (M5) —  
+    a corrupt file must not 500 every endpoint that touches history."""  
+    if not os.path.exists(history_file()):  
+        return []  
+    try:  
         with open(history_file()) as f:  
-            return json.load(f)  
-    return []  
+            data = json.load(f)  
+        return data if isinstance(data, list) else []  
+    except (json.JSONDecodeError, OSError):  
+        return []  
   
   
 def save_history(history):  
-    with open(history_file(), "w") as f:  
+    """Atomic write — tmp file + os.replace, so a crash mid-write never  
+    leaves a truncated history.json (M5)."""  
+    tmp = history_file() + ".tmp"  
+    with open(tmp, "w") as f:  
         json.dump(history, f, indent=2)  
+    os.replace(tmp, history_file())  
+  
+  
+def append_history(entry):  
+    """H1: lock + re-read + append + write. Concurrent /api/generate  
+    requests no longer overwrite each other's entries."""  
+    with _history_lock:  
+        history = load_history()  
+        history.append(entry)  
+        save_history(history)  
+  
+  
+def update_history_entry(entry_id, fields):  
+    """H1: lock + re-read + patch by id + write. The generate worker calls  
+    this instead of mutating a list captured before the thread ran."""  
+    with _history_lock:  
+        history = load_history()  
+        for e in history:  
+            if e.get("id") == entry_id:  
+                e.update(fields)  
+                break  
+        save_history(history)  
   
   
 # =============================================================================  
@@ -767,38 +799,39 @@ def generate():
         "sources": matched_files,  
         "search_source": search_source,  
     }  
-    history = load_history()  
-    history.append(entry)  
-    save_history(history)  
+    # H1: append under the lock instead of mutating a pre-read snapshot.  
+    append_history(entry)  
+    entry_id = entry["id"]  
   
     def run():  
+        fields = {}  
         _mark_ai_busy()  
         try:  
             output = None  
             if _server_ready():  
                 output = _generate_via_server(prompt, system_prompt)  
                 if output is not None:  
-                    entry["backend"] = "llama-server"  
+                    fields["backend"] = "llama-server"  
   
             if output is None:  
                 output = _generate_via_cli(prompt, system_prompt)  
-                entry["backend"] = "llama-cli"  
+                fields["backend"] = "llama-cli"  
   
             output = _strip_thinking(output or "")  
-            entry["refined"] = output if output else "(empty response — try again)"  
-            entry["status"] = "done"  
+            fields["refined"] = output if output else "(empty response — try again)"  
+            fields["status"] = "done"  
         except subprocess.TimeoutExpired:  
-            entry["status"] = "timeout"  
+            fields["status"] = "timeout"  
         except Exception as e:  
-            entry["refined"] = str(e)  
-            entry["status"] = "error"  
+            fields["refined"] = str(e)  
+            fields["status"] = "error"  
         finally:  
             _mark_ai_idle()  
-        save_history(history)  
+        # H1: patch the stored entry by id — never re-save the captured list.  
+        update_history_entry(entry_id, fields)  
   
     threading.Thread(target=run, daemon=True).start()  
     return jsonify(entry)  
-  
   
 # =============================================================================  
 # History endpoints  
@@ -819,17 +852,18 @@ def get_entry(entry_id):
   
 @app.route("/api/history/clear", methods=["POST"])  
 def clear_history():  
-    save_history([])  
+    with _history_lock:  
+        save_history([])  
     return jsonify({"status": "cleared"})  
   
   
 @app.route("/api/history/<entry_id>", methods=["DELETE"])  
 def delete_entry(entry_id):  
-    history = [e for e in load_history() if e["id"] != entry_id]  
-    save_history(history)  
-    return jsonify({"status": "deleted"})  
-  
-  
+    with _history_lock:  
+        history = [e for e in load_history() if e["id"] != entry_id]  
+        save_history(history)  
+    return jsonify({"status": "deleted"})
+
 # =============================================================================  
 # Repo search endpoints  
 # =============================================================================  
@@ -869,15 +903,20 @@ def index_status():
     count = None  
     index_error = None  
     if exists:  
+        conn = None  
         try:  
             conn = _get_index_connection()  
             if conn is not None:  
                 count = conn.execute("SELECT count(*) FROM files").fetchone()[0]  
-                conn.close()  
             else:  
                 index_error = "could not open index DB"  
         except Exception as e:  
             index_error = str(e)  
+        finally:  
+            # L11: close unconditionally — was only closed on the success path,  
+            # leaking the connection whenever execute() raised.  
+            if conn is not None:  
+                conn.close()  
     mtime = None  
     if exists:  
         try:  
@@ -1248,11 +1287,16 @@ def _collect_system_info():
         if os.path.isfile(INDEX_DB):  
             info["index_size"] = f"{os.path.getsize(INDEX_DB) / (1024*1024):.0f} MB"  
             conn = _get_index_connection()  
-            if conn is not None:  
-                info["index_files"] = conn.execute("SELECT count(*) FROM files").fetchone()[0]  
-                conn.close()  
-            else:  
-                info["index_files"] = None  
+            try:  
+                # L11: close unconditionally — was only closed on success.  
+                if conn is not None:  
+                    info["index_files"] = conn.execute(  
+                        "SELECT count(*) FROM files").fetchone()[0]  
+                else:  
+                    info["index_files"] = None  
+            finally:  
+                if conn is not None:  
+                    conn.close()  
         else:  
             info["index_size"] = None  
             info["index_files"] = None  
@@ -1508,15 +1552,14 @@ def clear_log():
         return jsonify({"error": "Permission denied. Run: sudo chown $USER /var/log/dizercore-install.log"}), 403  
     except Exception as e:  
         return jsonify({"error": str(e)}), 500  
-  
-  
+    
 # =============================================================================  
 # Training endpoints  
 # (formerly the web-ui/training.py blueprint — inlined after that file was  
 #  removed; it only ever contained a stale copy of dataset-builder.py)  
 # =============================================================================  
   
-TRAINING_DEPLOY_SCRIPT = "/usr/local/sbin/dizercore-training-deploy"
+TRAINING_DEPLOY_SCRIPT = "/usr/local/sbin/dizercore-training-deploy"  
 DATASET_BUILDER = os.path.join(TRAINING_DIR, "dataset-builder.py")  
   
 _build_state = {"building": False, "log": "", "exit_code": None}  
@@ -1639,8 +1682,7 @@ def training_dataset_download():
     return send_file(DATASET_FILE, as_attachment=True,  
                      download_name="dizercore-dataset.jsonl",  
                      mimetype="application/jsonl")  
-  
-  
+    
 @app.route("/api/training/upload-model", methods=["POST"])  
 def training_upload_model():  
     if "model" not in request.files:  
@@ -1651,16 +1693,17 @@ def training_upload_model():
     os.makedirs(os.path.dirname(TRAINED_MODEL), exist_ok=True)  
     tmp = TRAINED_MODEL + ".part"  
     try:  
-        # C2: validate the GGUF magic off the raw stream BEFORE writing  
-        # anything to disk, then copy the body in 1 MB chunks. A bogus  
-        # request is rejected after 4 bytes, not after a full write.  
-        stream = request.stream  
-        if stream.read(4) != b"GGUF":  
+        # C2: validate the GGUF magic off the upload's own stream BEFORE  
+        # writing anything to disk. Must read f.stream — NOT request.stream,  
+        # which is already consumed by the request.files access above.  
+        # A bogus request is rejected after 4 bytes, not after a full write.  
+        up = f.stream  
+        if up.read(4) != b"GGUF":  
             return jsonify({"error": "Not a valid GGUF file"}), 400  
         with open(tmp, "wb") as out:  
             out.write(b"GGUF")  
             while True:  
-                chunk = stream.read(1024 * 1024)  
+                chunk = up.read(1024 * 1024)  
                 if not chunk:  
                     break  
                 out.write(chunk)  
