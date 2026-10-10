@@ -55,15 +55,19 @@ REPO_BRANCH = "main"
 GITEA_CONTAINER = "gitea"
 POSTGRES_CONTAINER = "gitea-db"
 
-REPO_SEARCH_MAX_FILES = 8
+# Perf: was 8 files / 6000 chars. Trimmed to 5 files / 4000 chars to cut
+# prefill time on the Pi (each ~1500 chars ≈ 375 tokens of system prompt).
+REPO_SEARCH_MAX_FILES = 5
 REPO_SEARCH_CONTEXT_LINES = 4
-REPO_SEARCH_CHAR_LIMIT = 6000
+REPO_SEARCH_CHAR_LIMIT = 4000
 REPO_SEARCH_TIMEOUT = 10
 REPO_SEARCH_MAX_FILES_PER_KEYWORD = 500
 
 # Investigation output is multi-section (FILES TO CHECK / WHAT TO VERIFY /
-# PROMPT FOR NEXT AI) — 256 tokens truncated it mid-block.
-GENERATE_MAX_TOKENS = 700
+# PROMPT FOR NEXT AI) — 256 tokens truncated it mid-block. 700 gave headroom
+# but doubled wall-clock on the Pi; 400 covers the structured output with
+# ~10% slack.
+GENERATE_MAX_TOKENS = 400
 
 # Seconds to wait for the index-watcher control API. Was 1s — too short
 # while the indexer saturates the Pi's CPU, which made the UI report
