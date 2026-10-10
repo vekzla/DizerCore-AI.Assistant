@@ -130,9 +130,20 @@ done
 HDR "9/14: Web UI"
 if [[ -d /data/web-ui ]]; then
   OK "/data/web-ui exists"
-  for f in app.py indexer.py index-watcher.py training-deploy.sh game-data.txt requirements.txt; do
-    [[ -f "/data/web-ui/$f" ]] && OK "  $f" || FAIL "  $f missing"
-  done
+for f in app.py indexer.py index-watcher.py game-data.txt requirements.txt; do  
+    [[ -f "/data/web-ui/$f" ]] && OK "  $f" || FAIL "  $f missing"  
+  done  
+  # training-deploy.sh is installed to a root-owned location and the  
+  # user-writable copy under /data/web-ui is deleted on install, so check  
+  # the real target instead (see lib/10-training.sh install_training()).  
+  DEPLOY_HELPER=/usr/local/sbin/dizercore-training-deploy  
+  if [[ -x "$DEPLOY_HELPER" && "$(stat -c '%U' "$DEPLOY_HELPER" 2>/dev/null)" == "root" ]]; then  
+    OK "  dizercore-training-deploy helper (root:root 0755)"  
+  elif [[ -f "$DEPLOY_HELPER" ]]; then  
+    WARN "  dizercore-training-deploy helper present but not root-owned/executable"  
+  else  
+    FAIL "  dizercore-training-deploy helper missing"  
+  fi  
   [[ -f /data/training/dataset-builder.py ]] && OK "  /data/training/dataset-builder.py" || WARN "  dataset-builder.py not deployed"
   [[ -f /data/web-ui/templates/index.html ]] && OK "  templates/index.html" || FAIL "  templates/index.html missing"
   [[ -f /data/web-ui/static/logo.png ]] && OK "  static/logo.png" || WARN "  static/logo.png missing"
