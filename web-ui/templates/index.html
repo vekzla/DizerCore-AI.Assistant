@@ -1,1915 +1,2056 @@
-<!-- DizerCore AI Assistant -->  
-<!DOCTYPE html>  
-<html lang="en">  
-<head>  
-<meta charset="UTF-8">  
-<meta name="viewport" content="width=device-width, initial-scale=1.0">  
-<title>DizerCore AI Assistant</title>  
-<link rel="icon" type="image/png" href="/static/logo.png">  
-<style>  
-  :root {  
-    --bg: #0d1117; --surface: #161b22; --border: #30363d;  
-    --text: #c9d1d9; --accent: #58a6ff;  
-    --green: #3fb950; --red: #f85149; --yellow: #d29922; --blue: #58a6ff;  
-    --gray: #8b949e; --purple: #a078ff;  
-  }  
-  * { box-sizing: border-box; margin: 0; padding: 0; }  
-  html, body { height: 100%; }  
-  body {  
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;  
-    background: var(--bg); color: var(--text);  
-    display: flex; flex-direction: column;  
-  }  
-  
-  .header {  
-    flex: 0 0 auto;  
-    display: flex; align-items: center; gap: 16px;  
-    padding: 16px 24px;  
-    background: var(--surface); border-bottom: 1px solid var(--border);  
-  }  
-  .header img { height: 40px; width: 40px; border-radius: 8px; object-fit: cover; }  
-  .header h1 { font-size: 1.2rem; font-weight: 600; }  
-  .header .spacer { flex: 1; }  
-  .logo-upload { display: none; }  
-  .logo-label { cursor: pointer; font-size: 0.8rem; color: var(--accent); }  
-  
-  .hdr-btn {  
-    padding: 6px 12px;  
-    border: 1px solid var(--border);  
-    border-radius: 6px;  
-    background: var(--surface);  
-    color: var(--text);  
-    cursor: pointer;  
-    font-size: 0.78rem;  
-    position: relative;  
-  }  
-  .hdr-btn:hover { background: #21262d; }  
-  .hdr-btn .dot {  
-    display: inline-block; width: 8px; height: 8px;  
-    border-radius: 50%; margin-left: 6px; vertical-align: middle;  
-  }  
-  .hdr-btn .dot.err { background: var(--red); }  
-  .hdr-btn .dot.warn { background: var(--yellow); }  
-  .hdr-btn .dot.ok { background: var(--green); }  
-  .hdr-btn .dot.active { background: var(--purple); }  
-  
-  .version-badge {  
-    display: flex; align-items: center; gap: 10px;  
-    padding: 6px 12px; border-radius: 6px;  
-    font-family: monospace; font-size: 0.85rem; font-weight: 700;  
-    transition: all 0.2s; user-select: none;  
-  }  
-  .version-badge.checking    { color: var(--gray); background: rgba(139,148,158,0.1); }  
-  .version-badge.up-to-date  { color: var(--green); background: rgba(63,185,80,0.12); }  
-  .version-badge.out-of-date { color: var(--red); background: rgba(248,81,73,0.12); }  
-  .version-badge.error       { color: var(--gray); background: rgba(139,148,158,0.1); }  
-  .version-update-btn {  
-    padding: 4px 12px; border: 1px solid currentColor;  
-    border-radius: 4px; background: transparent; color: inherit;  
-    cursor: pointer; font-size: 0.78rem; font-weight: 700; font-family: inherit;  
-  }  
-  .version-update-btn:hover { background: rgba(248,81,73,0.15); }  
-  .version-update-btn:disabled { opacity: 0.5; cursor: not-allowed; }  
-  
-  .stats-bar {  
-    flex: 0 0 auto;  
-    display: grid;  
-    grid-template-columns: repeat(5, minmax(150px, 1fr));  
-    gap: 18px;  
-    padding: 10px 24px;  
-    background: var(--surface);  
-    border-bottom: 1px solid var(--border);  
-    overflow-x: auto;  
-  }  
-  .stat {  
-    display: grid;  
-    grid-template-columns: 42px 1fr;  
-    grid-template-rows: auto 6px;  
-    gap: 3px 8px;  
-    align-items: center;  
-    min-width: 0;  
-  }  
-  .stat-label {  
-    grid-row: 1; grid-column: 1;  
-    font-size: 0.68rem; color: var(--gray);  
-    font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;  
-  }  
-  .stat-value {  
-    grid-row: 1; grid-column: 2;  
-    font-family: monospace; font-size: 0.78rem; font-weight: 700;  
-    text-align: right; white-space: nowrap;  
-    overflow: hidden; text-overflow: ellipsis;  
-  }  
-  .stat-bar {  
-    grid-row: 2; grid-column: 1 / 3;  
-    height: 6px;  
-    background: rgba(255,255,255,0.06);  
-    border-radius: 3px;  
-    overflow: hidden;  
-    position: relative;  
-  }  
-  .stat-fill {  
-    position: absolute; top: 0; left: 0; bottom: 0;  
-    width: 0%; background: var(--green);  
-    transition: width 0.5s ease, background 0.3s;  
-    border-radius: 3px;  
-  }  
-  .stat-fill.warn { background: var(--yellow); }  
-  .stat-fill.crit { background: var(--red); }  
-  .stat.warn .stat-value { color: var(--yellow); }  
-  .stat.crit .stat-value { color: var(--red); }  
-  .stat.throttled .stat-value { color: var(--red); }  
-  .stat.throttled .stat-value::after { content: " ⚠"; font-size: 0.9em; }  
-  
-  .container {  
-    flex: 1 1 auto; min-height: 0;  
-    display: grid;  
-    grid-template-columns: 1fr 380px;  
-  }  
-  .main { padding: 24px; overflow-y: auto; }  
-  .sidebar {  
-    background: var(--surface);  
-    border-left: 1px solid var(--border);  
-    display: flex; flex-direction: column;  
-    min-height: 0;  
-  }  
-  .sidebar-header {  
-    padding: 12px 16px;  
-    border-bottom: 1px solid var(--border);  
-    display: flex; align-items: center; justify-content: space-between;  
-  }  
-  .sidebar-header h2 {  
-    font-size: 0.9rem; text-transform: uppercase;  
-    letter-spacing: 0.5px; color: var(--gray);  
-  }  
-  
-  textarea {  
-    width: 100%; min-height: 160px;  
-    background: var(--bg); color: var(--text);  
-    border: 1px solid var(--border); border-radius: 8px;  
-    padding: 12px; font-family: monospace; font-size: 0.9rem;  
-    resize: vertical;  
-  }  
-  textarea:focus { outline: none; border-color: var(--accent); }  
-  .btn-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }  
-  
-  button {  
-    padding: 8px 16px;  
-    border: 1px solid var(--border); border-radius: 6px;  
-    background: var(--surface); color: var(--text);  
-    cursor: pointer; font-size: 0.85rem;  
-    transition: background 0.15s;  
-  }  
-  button:hover { background: #21262d; }  
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }  
-  button.primary:hover { opacity: 0.9; }  
-  button.purple { background: var(--purple); color: #fff; border-color: var(--purple); }  
-  button.purple:hover { opacity: 0.9; }  
-  button.danger { color: var(--red); border-color: var(--red); }  
-  button.danger:hover { background: rgba(248,81,73,0.15); }  
-  button:disabled { opacity: 0.5; cursor: not-allowed; }  
-  
-  .output { margin-top: 20px; }  
-  .output-header {  
-    display: flex; align-items: center; justify-content: space-between;  
-    margin-bottom: 8px; gap: 12px;  
-  }  
-  .output-title { display: flex; align-items: center; gap: 10px; }  
-  .mode-badge {  
-    font-family: monospace;  
-    font-size: 0.72rem;  
-    padding: 2px 8px;  
-    border-radius: 4px;  
-    font-weight: 700;  
-    text-transform: uppercase;  
-    letter-spacing: 0.5px;  
-  }  
-  .mode-badge.cpp    { background: rgba(63,185,80,0.15);  color: var(--green); }  
-  .mode-badge.sql    { background: rgba(88,166,255,0.15); color: var(--blue); }  
-  .mode-badge.smart  { background: rgba(210,153,34,0.15); color: var(--yellow); }  
-  .mode-badge.opcode { background: rgba(255,120,220,0.15); color: #ff78dc; }  
-  .mode-badge.dbc    { background: rgba(160,120,255,0.15); color: var(--purple); }  
-  
-  pre {  
-    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;  
-    padding: 16px; white-space: pre-wrap; word-break: break-word;  
-    font-family: monospace; font-size: 0.88rem; line-height: 1.5;  
-    max-height: 400px; overflow-y: auto;  
-  }  
-  
-  .sources-row {  
-    display: flex;  
-    flex-wrap: wrap;  
-    gap: 6px;  
-    margin-top: 8px;  
-    font-family: monospace;  
-    font-size: 0.72rem;  
-    align-items: center;  
-  }  
-  .source-chip {  
-    display: inline-block;  
-    padding: 2px 8px;  
-    background: rgba(88,166,255,0.1);  
-    color: var(--accent);  
-    border: 1px solid rgba(88,166,255,0.25);  
-    border-radius: 10px;  
-    white-space: nowrap;  
-    overflow: hidden;  
-    text-overflow: ellipsis;  
-    max-width: 320px;  
-  }  
-  .sources-label {  
-    color: var(--gray);  
-    align-self: center;  
-    margin-right: 4px;  
-  }  
-  .source-tag {  
-    display: inline-block;  
-    padding: 1px 6px;  
-    font-size: 0.68rem;  
-    border-radius: 3px;  
-    font-weight: 700;  
-    text-transform: uppercase;  
-    letter-spacing: 0.3px;  
-  }  
-  .source-tag.fts5    { background: rgba(63,185,80,0.15);  color: var(--green); }  
-  .source-tag.ripgrep { background: rgba(210,153,34,0.15); color: var(--yellow); }  
-  
-  .history-list { flex: 1; overflow-y: auto; }  
-  .history-item {  
-    padding: 10px 16px;  
-    border-bottom: 1px solid var(--border);  
-    cursor: pointer; font-size: 0.82rem;  
-  }  
-  .history-item:hover { background: #21262d; }  
-  .history-item .time { color: var(--gray); font-size: 0.75rem; }  
-  .history-item .preview {  
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;  
-    margin-top: 2px;  
-  }  
-  .history-item .badge {  
-    display: inline-block; padding: 1px 6px; border-radius: 4px;  
-    font-size: 0.7rem; margin-left: 6px;  
-  }  
-  .badge.done { background: rgba(63,185,80,0.2); color: var(--green); }  
-  .badge.running { background: rgba(88,166,255,0.2); color: var(--accent); }  
-  .badge.error, .badge.timeout { background: rgba(248,81,73,0.2); color: var(--red); }  
-  .badge.mode {  
-    background: rgba(139,148,158,0.15);  
-    color: var(--gray);  
-    font-family: monospace;  
-    text-transform: uppercase;  
-    font-size: 0.65rem;  
-    letter-spacing: 0.3px;  
-  }  
-  .empty { padding: 24px; text-align: center; color: var(--gray); font-size: 0.85rem; }  
-  
-  .toast {  
-    position: fixed; bottom: 20px; right: 20px;  
-    background: var(--green); color: #fff;  
-    padding: 10px 20px; border-radius: 8px;  
-    font-size: 0.85rem;  
-    opacity: 0; transition: opacity 0.3s; pointer-events: none;  
-    z-index: 2000;  
-  }  
-  .toast.show { opacity: 1; }  
-  .toast.error { background: var(--red); }  
-  
-  .modal-overlay {  
-    position: fixed; inset: 0;  
-    background: rgba(0,0,0,0.7);  
-    display: none; align-items: center; justify-content: center;  
-    z-index: 1000;  
-  }  
-  .modal-overlay.show { display: flex; }  
-  .modal {  
-    background: var(--surface);  
-    border: 1px solid var(--border);  
-    border-radius: 12px;  
-    display: flex; flex-direction: column;  
-    box-shadow: 0 20px 60px rgba(0,0,0,0.5);  
-    max-height: 85vh;  
-  }  
-  .modal-header {  
-    display: flex; align-items: center; justify-content: space-between;  
-    padding: 16px 20px; border-bottom: 1px solid var(--border);  
-    flex: 0 0 auto;  
-  }  
-  .modal-header h3 { font-size: 1rem; }  
-  .modal-header .status { font-size: 0.8rem; font-weight: 600; color: var(--gray); margin-left: 12px; }  
-  .modal-header .status.running { color: var(--accent); }  
-  .modal-header .status.done    { color: var(--green); }  
-  .modal-header .status.error   { color: var(--red); }  
-  .modal-footer {  
-    padding: 12px 20px; border-top: 1px solid var(--border);  
-    display: flex; justify-content: flex-end; gap: 8px;  
-    flex: 0 0 auto;  
-  }  
-  
-  .update-modal { width: 90%; max-width: 800px; }  
-  .update-log {  
-    flex: 1; overflow-y: auto; padding: 16px 20px; margin: 0;  
-    font-family: monospace; font-size: 0.78rem; line-height: 1.5;  
-    background: var(--bg); color: var(--text);  
-    white-space: pre-wrap; word-break: break-word;  
-    max-height: 60vh;  
-  }  
-  
-  .sysinfo-modal { width: 90%; max-width: 620px; }  
-  .sysinfo-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }  
-  .sysinfo-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }  
-  .sysinfo-table tr { border-bottom: 1px solid var(--border); }  
-  .sysinfo-table tr:last-child { border-bottom: none; }  
-  .sysinfo-table td { padding: 10px 20px; vertical-align: top; }  
-  .sysinfo-table td:first-child { width: 40%; color: var(--gray); font-weight: 600; }  
-  .sysinfo-table td:last-child { font-family: monospace; word-break: break-all; }  
-  .sysinfo-table .missing { color: var(--gray); font-style: italic; }  
-  .sysinfo-table .error-row td { color: var(--red); font-size: 0.78rem; }  
-  .sysinfo-table .section-row td {  
-    background: rgba(255,255,255,0.03);  
-    color: var(--accent);  
-    font-weight: 700;  
-    text-transform: uppercase;  
-    font-size: 0.72rem;  
-    letter-spacing: 0.5px;  
-  }  
-  
-  .log-modal { width: 95%; max-width: 1100px; height: 85vh; }  
-  .log-toolbar {  
-    display: flex; align-items: center; gap: 8px;  
-    padding: 10px 20px; border-bottom: 1px solid var(--border);  
-    flex-wrap: wrap; background: var(--bg);  
-  }  
-  .log-filter-btn {  
-    padding: 5px 12px; border: 1px solid var(--border);  
-    border-radius: 4px; background: var(--surface); color: var(--text);  
-    cursor: pointer; font-size: 0.78rem; font-family: monospace;  
-    display: inline-flex; align-items: center; gap: 6px;  
-  }  
-  .log-filter-btn:hover { background: #21262d; }  
-  .log-filter-btn.active { border-color: var(--accent); background: rgba(88,166,255,0.15); color: var(--accent); }  
-  .log-filter-btn .count {  
-    background: rgba(255,255,255,0.08); border-radius: 8px;  
-    padding: 0 6px; font-size: 0.72rem; min-width: 20px; text-align: center;  
-  }  
-  .log-filter-btn[data-filter="install"].active { border-color: var(--green); background: rgba(63,185,80,0.15); color: var(--green); }  
-  .log-filter-btn[data-filter="skip"].active    { border-color: var(--blue);  background: rgba(88,166,255,0.15); color: var(--blue); }  
-  .log-filter-btn[data-filter="warn"].active    { border-color: var(--yellow); background: rgba(210,153,34,0.15); color: var(--yellow); }  
-  .log-filter-btn[data-filter="error"].active   { border-color: var(--red);   background: rgba(248,81,73,0.15); color: var(--red); }  
-  
-  .log-spacer { flex: 1; }  
-  .log-body { flex: 1; overflow: auto; background: var(--bg); }  
-  .log-lines {  
-    font-family: monospace; font-size: 0.78rem; line-height: 1.55;  
-    padding: 12px 0; white-space: pre; min-width: 100%;  
-    display: inline-block;  
-  }  
-  .log-line { padding: 0 20px; }  
-  .log-line:hover { background: rgba(255,255,255,0.03); }  
-  .log-line.tag-install { color: var(--green); }  
-  .log-line.tag-skip    { color: var(--blue); }  
-  .log-line.tag-warn    { color: var(--yellow); }  
-  .log-line.tag-error   { color: var(--red); background: rgba(248,81,73,0.08); }  
-  .log-line.tag-step    { color: var(--text); font-weight: 700; }  
-  .log-line.tag-other   { color: var(--gray); }  
-  .log-empty { padding: 40px; text-align: center; color: var(--gray); }  
-  
-  /* Index modal */  
-  .index-modal { width: 90%; max-width: 760px; }  
-  .index-body {  
-    padding: 16px 20px;  
-    display: grid;  
-    gap: 12px;  
-  }  
-  .index-stats {  
-    display: grid;  
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));  
-    gap: 12px;  
-  }  
-  .index-stat {  
-    background: var(--bg);  
-    border: 1px solid var(--border);  
-    border-radius: 8px;  
-    padding: 10px 14px;  
-  }  
-  .index-stat .label {  
-    font-size: 0.7rem;  
-    color: var(--gray);  
-    text-transform: uppercase;  
-    letter-spacing: 0.5px;  
-    font-weight: 700;  
-  }  
-  .index-stat .value {  
-    font-family: monospace;  
-    font-size: 1.1rem;  
-    font-weight: 700;  
-    margin-top: 4px;  
-  }  
-  
-  /* Training modal */  
-  .training-modal { width: 92%; max-width: 820px; }  
-  .training-body {  
-    padding: 20px;  
-    overflow-y: auto;  
-    display: grid;  
-    gap: 18px;  
-  }  
-  .training-state {  
-    display: none;  
-    background: var(--bg);  
-    border: 1px solid var(--border);  
-    border-radius: 10px;  
-    padding: 18px;  
-  }  
-  .training-state.active { display: block; }  
-  .training-state h4 {  
-    font-size: 0.95rem;  
-    margin-bottom: 8px;  
-    color: var(--text);  
-    display: flex; align-items: center; gap: 10px;  
-  }  
-  .training-state h4 .step-num {  
-    display: inline-flex;  
-    align-items: center;  
-    justify-content: center;  
-    width: 22px; height: 22px;  
-    border-radius: 50%;  
-    background: rgba(160,120,255,0.15);  
-    color: var(--purple);  
-    font-size: 0.75rem;  
-    font-weight: 700;  
-  }  
-  .training-state p {  
-    font-size: 0.85rem;  
-    color: var(--gray);  
-    margin-bottom: 12px;  
-    line-height: 1.5;  
-  }  
-  .training-state .actions {  
-    display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;  
-  }  
-  .training-state .note {  
-    font-size: 0.78rem;  
-    color: var(--gray);  
-    margin-top: 10px;  
-    padding: 8px 12px;  
-    background: rgba(255,255,255,0.02);  
-    border-left: 3px solid var(--purple);  
-    border-radius: 4px;  
-  }  
-  .training-stats {  
-    display: grid;  
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));  
-    gap: 10px;  
-    margin: 12px 0;  
-  }  
-  .training-stat {  
-    background: rgba(255,255,255,0.03);  
-    border-radius: 6px;  
-    padding: 8px 12px;  
-  }  
-  .training-stat .label {  
-    font-size: 0.68rem;  
-    color: var(--gray);  
-    text-transform: uppercase;  
-    letter-spacing: 0.5px;  
-    font-weight: 700;  
-  }  
-  .training-stat .value {  
-    font-family: monospace;  
-    font-size: 0.95rem;  
-    font-weight: 700;  
-    margin-top: 2px;  
-  }  
-  .training-progress {  
-    height: 8px;  
-    background: rgba(255,255,255,0.06);  
-    border-radius: 4px;  
-    overflow: hidden;  
-    margin-top: 12px;  
-    display: none;  
-  }  
-  .training-progress.show { display: block; }  
-  .training-progress-bar {  
-    height: 100%;  
-    background: var(--purple);  
-    width: 0%;  
-    transition: width 0.2s;  
-  }  
-  .training-log-wrap {  
-    display: none;  
-  }  
-  .training-log-wrap.show { display: block; }  
-  .training-log-wrap .label {  
-    font-size: 0.72rem;  
-    color: var(--gray);  
-    text-transform: uppercase;  
-    letter-spacing: 0.5px;  
-    font-weight: 700;  
-    margin-bottom: 6px;  
-  }  
-  .training-log {  
-    max-height: 220px;  
-    background: var(--bg);  
-    border: 1px solid var(--border);  
-    border-radius: 8px;  
-    padding: 12px;  
-    font-family: monospace;  
-    font-size: 0.75rem;  
-    line-height: 1.5;  
-    white-space: pre-wrap;  
-    word-break: break-word;  
-    overflow-y: auto;  
-    color: var(--text);  
-  }  
-  .file-picker {  
-    display: flex;  
-    align-items: center;  
-    gap: 10px;  
-    padding: 12px;  
-    background: rgba(255,255,255,0.03);  
-    border: 1px dashed var(--border);  
-    border-radius: 8px;  
-    margin: 12px 0;  
-    cursor: pointer;  
-    transition: border-color 0.2s;  
-  }  
-  .file-picker:hover { border-color: var(--purple); }  
-  .file-picker input[type="file"] { display: none; }  
-  .file-picker .icon {  
-    font-size: 1.4rem;  
-    color: var(--purple);  
-  }  
-  .file-picker .text {  
-    flex: 1;  
-    font-size: 0.85rem;  
-  }  
-  .file-picker .text .filename {  
-    font-family: monospace;  
-    color: var(--text);  
-    font-weight: 700;  
-  }  
-  .file-picker .text .hint {  
-    color: var(--gray);  
-    font-size: 0.78rem;  
-    margin-top: 2px;  
-  }  
-  
-  @media (max-width: 900px) {  
-    .stats-bar { grid-template-columns: repeat(2, 1fr); }  
-    .container { grid-template-columns: 1fr; }  
-    .sidebar { display: none; }  
-  }  
-</style>  
+<!-- DizerCore AI Assistant -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DizerCore AI Assistant</title>
+<link rel="icon" type="image/png" href="/static/logo.png">
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #c9d1d9; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922; --blue: #58a6ff;
+    --gray: #8b949e; --purple: #a078ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text);
+    display: flex; flex-direction: column;
+  }
+
+  .header {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 16px;
+    padding: 16px 24px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .header img { height: 40px; width: 40px; border-radius: 8px; object-fit: cover; }
+  .header h1 { font-size: 1.2rem; font-weight: 600; }
+  .header .spacer { flex: 1; }
+  .logo-upload { display: none; }
+  .logo-label { cursor: pointer; font-size: 0.8rem; color: var(--accent); }
+
+  .hdr-btn {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.78rem;
+    position: relative;
+  }
+  .hdr-btn:hover { background: #21262d; }
+  .hdr-btn .dot {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; margin-left: 6px; vertical-align: middle;
+  }
+  .hdr-btn .dot.err { background: var(--red); }
+  .hdr-btn .dot.warn { background: var(--yellow); }
+  .hdr-btn .dot.ok { background: var(--green); }
+  .hdr-btn .dot.active { background: var(--purple); }
+
+  .version-badge {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 12px; border-radius: 6px;
+    font-family: monospace; font-size: 0.85rem; font-weight: 700;
+    transition: all 0.2s; user-select: none;
+  }
+  .version-badge.checking    { color: var(--gray); background: rgba(139,148,158,0.1); }
+  .version-badge.up-to-date  { color: var(--green); background: rgba(63,185,80,0.12); }
+  .version-badge.out-of-date { color: var(--red); background: rgba(248,81,73,0.12); }
+  .version-badge.error       { color: var(--gray); background: rgba(139,148,158,0.1); }
+  .version-update-btn {
+    padding: 4px 12px; border: 1px solid currentColor;
+    border-radius: 4px; background: transparent; color: inherit;
+    cursor: pointer; font-size: 0.78rem; font-weight: 700; font-family: inherit;
+  }
+  .version-update-btn:hover { background: rgba(248,81,73,0.15); }
+  .version-update-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .stats-bar {
+    flex: 0 0 auto;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(150px, 1fr));
+    gap: 18px;
+    padding: 10px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+  }
+  .stat {
+    display: grid;
+    grid-template-columns: 42px 1fr;
+    grid-template-rows: auto 6px;
+    gap: 3px 8px;
+    align-items: center;
+    min-width: 0;
+  }
+  .stat-label {
+    grid-row: 1; grid-column: 1;
+    font-size: 0.68rem; color: var(--gray);
+    font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+  }
+  .stat-value {
+    grid-row: 1; grid-column: 2;
+    font-family: monospace; font-size: 0.78rem; font-weight: 700;
+    text-align: right; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .stat-bar {
+    grid-row: 2; grid-column: 1 / 3;
+    height: 6px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+  }
+  .stat-fill {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    width: 0%; background: var(--green);
+    transition: width 0.5s ease, background 0.3s;
+    border-radius: 3px;
+  }
+  .stat-fill.warn { background: var(--yellow); }
+  .stat-fill.crit { background: var(--red); }
+  .stat.warn .stat-value { color: var(--yellow); }
+  .stat.crit .stat-value { color: var(--red); }
+  .stat.throttled .stat-value { color: var(--red); }
+  .stat.throttled .stat-value::after { content: " ⚠"; font-size: 0.9em; }
+
+  .container {
+    flex: 1 1 auto; min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr 380px;
+  }
+  .main { padding: 24px; overflow-y: auto; }
+  .sidebar {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  .sidebar-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sidebar-header h2 {
+    font-size: 0.9rem; text-transform: uppercase;
+    letter-spacing: 0.5px; color: var(--gray);
+  }
+
+  textarea {
+    width: 100%; min-height: 160px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-family: monospace; font-size: 0.9rem;
+    resize: vertical;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  .btn-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+  button {
+    padding: 8px 16px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); color: var(--text);
+    cursor: pointer; font-size: 0.85rem;
+    transition: background 0.15s;
+  }
+  button:hover { background: #21262d; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { opacity: 0.9; }
+  button.purple { background: var(--purple); color: #fff; border-color: var(--purple); }
+  button.purple:hover { opacity: 0.9; }
+  button.danger { color: var(--red); border-color: var(--red); }
+  button.danger:hover { background: rgba(248,81,73,0.15); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .output { margin-top: 20px; }
+  .output-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px; gap: 12px;
+  }
+  .output-title { display: flex; align-items: center; gap: 10px; }
+  .mode-badge {
+    font-family: monospace;
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .mode-badge.cpp    { background: rgba(63,185,80,0.15);  color: var(--green); }
+  .mode-badge.sql    { background: rgba(88,166,255,0.15); color: var(--blue); }
+  .mode-badge.smart  { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .mode-badge.opcode { background: rgba(255,120,220,0.15); color: #ff78dc; }
+  .mode-badge.dbc    { background: rgba(160,120,255,0.15); color: var(--purple); }
+
+  pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; white-space: pre-wrap; word-break: break-word;
+    font-family: monospace; font-size: 0.88rem; line-height: 1.5;
+    max-height: 400px; overflow-y: auto;
+  }
+
+  /* Reasoning panel — collapsible, dimmer than the main output */
+  #output-reasoning-wrap {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.02);
+  }
+  #output-reasoning-wrap summary {
+    cursor: pointer;
+    padding: 8px 14px;
+    font-size: 0.82rem;
+    color: var(--gray);
+    user-select: none;
+    list-style: none;
+  }
+  #output-reasoning-wrap summary::-webkit-details-marker { display: none; }
+  #output-reasoning-wrap summary::before {
+    content: "▸ ";
+    display: inline-block;
+    transition: transform 0.15s;
+    margin-right: 4px;
+  }
+  #output-reasoning-wrap[open] summary::before {
+    transform: rotate(90deg);
+  }
+  #output-reasoning-wrap summary:hover {
+    color: var(--text);
+  }
+  #output-reasoning {
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 8px 8px;
+    background: rgba(0,0,0,0.3);
+    color: #6e7681;
+    font-size: 0.82rem;
+    max-height: 320px;
+  }
+
+  .sources-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+    font-family: monospace;
+    font-size: 0.72rem;
+    align-items: center;
+  }
+  .source-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    background: rgba(88,166,255,0.1);
+    color: var(--accent);
+    border: 1px solid rgba(88,166,255,0.25);
+    border-radius: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 320px;
+  }
+  .sources-label {
+    color: var(--gray);
+    align-self: center;
+    margin-right: 4px;
+  }
+  .source-tag {
+    display: inline-block;
+    padding: 1px 6px;
+    font-size: 0.68rem;
+    border-radius: 3px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .source-tag.fts5    { background: rgba(63,185,80,0.15);  color: var(--green); }
+  .source-tag.ripgrep { background: rgba(210,153,34,0.15); color: var(--yellow); }
+
+  .history-list { flex: 1; overflow-y: auto; }
+  .history-item {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer; font-size: 0.82rem;
+  }
+  .history-item:hover { background: #21262d; }
+  .history-item .time { color: var(--gray); font-size: 0.75rem; }
+  .history-item .preview {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+  .history-item .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    font-size: 0.7rem; margin-left: 6px;
+  }
+  .badge.done { background: rgba(63,185,80,0.2); color: var(--green); }
+  .badge.running { background: rgba(88,166,255,0.2); color: var(--accent); }
+  .badge.error, .badge.timeout { background: rgba(248,81,73,0.2); color: var(--red); }
+  .badge.mode {
+    background: rgba(139,148,158,0.15);
+    color: var(--gray);
+    font-family: monospace;
+    text-transform: uppercase;
+    font-size: 0.65rem;
+    letter-spacing: 0.3px;
+  }
+  .empty { padding: 24px; text-align: center; color: var(--gray); font-size: 0.85rem; }
+
+  .toast {
+    position: fixed; bottom: 20px; right: 20px;
+    background: var(--green); color: #fff;
+    padding: 10px 20px; border-radius: 8px;
+    font-size: 0.85rem;
+    opacity: 0; transition: opacity 0.3s; pointer-events: none;
+    z-index: 2000;
+  }
+  .toast.show { opacity: 1; }
+  .toast.error { background: var(--red); }
+
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: none; align-items: center; justify-content: center;
+    z-index: 1000;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    display: flex; flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    max-height: 85vh;
+  }
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+  }
+  .modal-header h3 { font-size: 1rem; }
+  .modal-header .status { font-size: 0.8rem; font-weight: 600; color: var(--gray); margin-left: 12px; }
+  .modal-header .status.running { color: var(--accent); }
+  .modal-header .status.done    { color: var(--green); }
+  .modal-header .status.error   { color: var(--red); }
+  .modal-footer {
+    padding: 12px 20px; border-top: 1px solid var(--border);
+    display: flex; justify-content: flex-end; gap: 8px;
+    flex: 0 0 auto;
+  }
+
+  .update-modal { width: 90%; max-width: 800px; }
+  .update-log {
+    flex: 1; overflow-y: auto; padding: 16px 20px; margin: 0;
+    font-family: monospace; font-size: 0.78rem; line-height: 1.5;
+    background: var(--bg); color: var(--text);
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 60vh;
+  }
+
+  .sysinfo-modal { width: 90%; max-width: 620px; }
+  .sysinfo-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .sysinfo-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .sysinfo-table tr { border-bottom: 1px solid var(--border); }
+  .sysinfo-table tr:last-child { border-bottom: none; }
+  .sysinfo-table td { padding: 10px 20px; vertical-align: top; }
+  .sysinfo-table td:first-child { width: 40%; color: var(--gray); font-weight: 600; }
+  .sysinfo-table td:last-child { font-family: monospace; word-break: break-all; }
+  .sysinfo-table .missing { color: var(--gray); font-style: italic; }
+  .sysinfo-table .error-row td { color: var(--red); font-size: 0.78rem; }
+  .sysinfo-table .section-row td {
+    background: rgba(255,255,255,0.03);
+    color: var(--accent);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.5px;
+  }
+
+  .log-modal { width: 95%; max-width: 1100px; height: 85vh; }
+  .log-toolbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 20px; border-bottom: 1px solid var(--border);
+    flex-wrap: wrap; background: var(--bg);
+  }
+  .log-filter-btn {
+    padding: 5px 12px; border: 1px solid var(--border);
+    border-radius: 4px; background: var(--surface); color: var(--text);
+    cursor: pointer; font-size: 0.78rem; font-family: monospace;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .log-filter-btn:hover { background: #21262d; }
+  .log-filter-btn.active { border-color: var(--accent); background: rgba(88,166,255,0.15); color: var(--accent); }
+  .log-filter-btn .count {
+    background: rgba(255,255,255,0.08); border-radius: 8px;
+    padding: 0 6px; font-size: 0.72rem; min-width: 20px; text-align: center;
+  }
+  .log-filter-btn[data-filter="install"].active { border-color: var(--green); background: rgba(63,185,80,0.15); color: var(--green); }
+  .log-filter-btn[data-filter="skip"].active    { border-color: var(--blue);  background: rgba(88,166,255,0.15); color: var(--blue); }
+  .log-filter-btn[data-filter="warn"].active    { border-color: var(--yellow); background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .log-filter-btn[data-filter="error"].active   { border-color: var(--red);   background: rgba(248,81,73,0.15); color: var(--red); }
+
+  .log-spacer { flex: 1; }
+  .log-body { flex: 1; overflow: auto; background: var(--bg); }
+  .log-lines {
+    font-family: monospace; font-size: 0.78rem; line-height: 1.55;
+    padding: 12px 0; white-space: pre; min-width: 100%;
+    display: inline-block;
+  }
+  .log-line { padding: 0 20px; }
+  .log-line:hover { background: rgba(255,255,255,0.03); }
+  .log-line.tag-install { color: var(--green); }
+  .log-line.tag-skip    { color: var(--blue); }
+  .log-line.tag-warn    { color: var(--yellow); }
+  .log-line.tag-error   { color: var(--red); background: rgba(248,81,73,0.08); }
+  .log-line.tag-step    { color: var(--text); font-weight: 700; }
+  .log-line.tag-other   { color: var(--gray); }
+  .log-empty { padding: 40px; text-align: center; color: var(--gray); }
+
+  /* Index modal */
+  .index-modal { width: 90%; max-width: 760px; }
+  .index-body {
+    padding: 16px 20px;
+    display: grid;
+    gap: 12px;
+  }
+  .index-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  .index-stat {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+  }
+  .index-stat .label {
+    font-size: 0.7rem;
+    color: var(--gray);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+  }
+  .index-stat .value {
+    font-family: monospace;
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-top: 4px;
+  }
+
+  /* Training modal */
+  .training-modal { width: 92%; max-width: 820px; }
+  .training-body {
+    padding: 20px;
+    overflow-y: auto;
+    display: grid;
+    gap: 18px;
+  }
+  .training-state {
+    display: none;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .training-state.active { display: block; }
+  .training-state h4 {
+    font-size: 0.95rem;
+    margin-bottom: 8px;
+    color: var(--text);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .training-state h4 .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: rgba(160,120,255,0.15);
+    color: var(--purple);
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+  .training-state p {
+    font-size: 0.85rem;
+    color: var(--gray);
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+  .training-state .actions {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;
+  }
+  .training-state .note {
+    font-size: 0.78rem;
+    color: var(--gray);
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.02);
+    border-left: 3px solid var(--purple);
+    border-radius: 4px;
+  }
+  .training-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+    margin: 12px 0;
+  }
+  .training-stat {
+    background: rgba(255,255,255,0.03);
+    border-radius: 6px;
+    padding: 8px 12px;
+  }
+  .training-stat .label {
+    font-size: 0.68rem;
+    color: var(--gray);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+  }
+  .training-stat .value {
+    font-family: monospace;
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin-top: 2px;
+  }
+  .training-progress {
+    height: 8px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 12px;
+    display: none;
+  }
+  .training-progress.show { display: block; }
+  .training-progress-bar {
+    height: 100%;
+    background: var(--purple);
+    width: 0%;
+    transition: width 0.2s;
+  }
+  .training-log-wrap {
+    display: none;
+  }
+  .training-log-wrap.show { display: block; }
+  .training-log-wrap .label {
+    font-size: 0.72rem;
+    color: var(--gray);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .training-log {
+    max-height: 220px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: monospace;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-y: auto;
+    color: var(--text);
+  }
+  .file-picker {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    background: rgba(255,255,255,0.03);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    margin: 12px 0;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .file-picker:hover { border-color: var(--purple); }
+  .file-picker input[type="file"] { display: none; }
+  .file-picker .icon {
+    font-size: 1.4rem;
+    color: var(--purple);
+  }
+  .file-picker .text {
+    flex: 1;
+    font-size: 0.85rem;
+  }
+  .file-picker .text .filename {
+    font-family: monospace;
+    color: var(--text);
+    font-weight: 700;
+  }
+  .file-picker .text .hint {
+    color: var(--gray);
+    font-size: 0.78rem;
+    margin-top: 2px;
+  }
+
+  @media (max-width: 900px) {
+    .stats-bar { grid-template-columns: repeat(2, 1fr); }
+    .container { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+  }
+</style>
 </head>
-<body>  
-<script>  
-// ==========================================================================  
-// NEW: API token bootstrap (Phase 1 — C1 fix)  
-// Fetches the token from /api/token — an endpoint browsers can only read  
-// same-origin — then wraps window.fetch so every existing call sends  
-// X-DizerCore-Token automatically. Requests queue behind _ready so nothing  
-// fires before the token arrives. The token is also exposed as  
-// window.__dizerToken for the XMLHttpRequest in uploadModel().  
-// ==========================================================================  
-(function () {  
-  var _fetch = window.fetch.bind(window);  
-  var _token = null;  
-  var _ready = _fetch("/api/token")  
-    .then(function (r) { return r.ok ? r.json() : {}; })  
-    .then(function (d) { _token = d.token || null; window.__dizerToken = _token; })  
-    .catch(function () {});  
-  window.fetch = function (url, opts) {  
-    return _ready.then(function () {  
-      opts = opts || {};  
-      if (_token) {  
-        var h = Object.assign({}, opts.headers);  
-        h["X-DizerCore-Token"] = _token;  
-        opts.headers = h;  
-      }  
-      return _fetch(url, opts);  
-    });  
-  };  
-})();  
-</script>  
-  
-<div class="header">  
-  <img id="logo" src="/static/logo.png" alt="Logo" onerror="this.style.display='none'">  
-  <h1>DizerCore AI Assistant</h1>  
-  <div class="spacer"></div>  
-  
-  <div class="version-badge checking" id="version-badge" title="Click to re-check">  
-    <span id="version-text">checking...</span>  
-    <button class="version-update-btn" id="version-update-btn"  
-            onclick="startUpdate(event)" style="display:none;">Update</button>  
-  </div>  
-  
-  <button class="hdr-btn" onclick="showSysInfo()">System Info</button>  
-  <button class="hdr-btn" onclick="showLog()" title="View installer log">  
-    Logs <span id="log-dot"></span>  
-  </button>  
-  <button class="hdr-btn" onclick="showIndex()" title="Reference repo index">  
-    Index <span id="index-dot"></span>  
-  </button>  
-  <button class="hdr-btn" onclick="showTraining()" title="Model training">  
-    Training <span id="training-dot"></span>  
-  </button>  
-  
-  <label class="logo-label" for="logo-upload">Set Logo</label>  
-  <input type="file" id="logo-upload" class="logo-upload" accept="image/*" onchange="uploadLogo(this)">  
-</div>  
-  
-<div class="stats-bar" id="stats-bar">  
-  <div class="stat" id="stat-cpu" title="CPU usage">  
-    <div class="stat-label">CPU</div>  
-    <div class="stat-value" id="val-cpu">--</div>  
-    <div class="stat-bar"><div class="stat-fill" id="bar-cpu"></div></div>  
-  </div>  
-  <div class="stat" id="stat-ram" title="Memory usage">  
-    <div class="stat-label">RAM</div>  
-    <div class="stat-value" id="val-ram">--</div>  
-    <div class="stat-bar"><div class="stat-fill" id="bar-ram"></div></div>  
-  </div>  
-  <div class="stat" id="stat-disk" title="NVMe usage on /data">  
-    <div class="stat-label">DISK</div>  
-    <div class="stat-value" id="val-disk">--</div>  
-    <div class="stat-bar"><div class="stat-fill" id="bar-disk"></div></div>  
-  </div>  
-  <div class="stat" id="stat-temp" title="CPU temperature">  
-    <div class="stat-label">TEMP</div>  
-    <div class="stat-value" id="val-temp">--</div>  
-    <div class="stat-bar"><div class="stat-fill" id="bar-temp"></div></div>  
-  </div>  
-  <div class="stat" id="stat-gpu" title="GPU clock / throttle status">  
-    <div class="stat-label">GPU</div>  
-    <div class="stat-value" id="val-gpu">--</div>  
-    <div class="stat-bar"><div class="stat-fill" id="bar-gpu" style="width:0%; background:transparent;"></div></div>  
-  </div>  
-</div>  
-  
-<div class="container">  
-  <div class="main">  
-    <h3 style="margin-bottom:10px;">Your rough prompt</h3>  
-    <textarea id="prompt" placeholder="e.g., fix spell target positions in SpellMgr.cpp"></textarea>  
-    <div class="btn-row">  
-      <button class="primary" id="btn-generate" onclick="generate()">Refine Prompt</button>  
-      <button onclick="clearInput()">Clear Input</button>  
-      <button onclick="copyLast()">Copy Last Output</button>  
-    </div>  
-    <div class="output" id="output-section" style="display:none;">  
-      <div class="output-header">  
-        <div class="output-title">  
-          <h3>Refined Prompt</h3>  
-          <span class="mode-badge" id="output-mode" style="display:none;"></span>  
-          <span class="source-tag" id="output-source" style="display:none;"></span>  
-        </div>  
-        <button onclick="copyOutput()">Copy</button>  
-      </div>  
-      <pre id="output"></pre>  
-      <div class="sources-row" id="output-sources" style="display:none;"></div>  
-    </div>  
-  </div>  
-  <div class="sidebar">  
-    <div class="sidebar-header">  
-      <h2>History</h2>  
-      <button class="danger" onclick="clearHistory()" style="font-size:0.75rem;padding:4px 10px;">Clear All</button>  
-    </div>  
-    <div class="history-list" id="history-list">  
-      <div class="empty">No prompts yet.</div>  
-    </div>  
-  </div>  
-</div>  
-  
-<div class="toast" id="toast"></div>  
-  
-<!-- Update modal -->  
-<div class="modal-overlay" id="update-overlay">  
-  <div class="modal update-modal">  
-    <div class="modal-header">  
-      <div>  
-        <h3 style="display:inline;">Updating DizerCore</h3>  
-        <span class="status" id="update-status">starting...</span>  
-      </div>  
-      <button onclick="closeUpdate()" id="update-close-btn" disabled>✕</button>  
-    </div>  
-    <pre class="update-log" id="update-log"></pre>  
-    <div class="modal-footer" id="update-footer" style="display:none;">  
-      <button onclick="location.reload()">Reload Page</button>  
-      <button onclick="closeUpdate()">Close</button>  
-    </div>  
-  </div>  
-</div>  
-  
-<!-- System info modal -->  
-<div class="modal-overlay" id="sysinfo-overlay">  
-  <div class="modal sysinfo-modal">  
-    <div class="modal-header">  
-      <h3>System Info</h3>  
-      <button onclick="closeSysInfo()">✕</button>  
-    </div>  
-    <div class="sysinfo-body">  
-      <table class="sysinfo-table" id="sysinfo-table">  
-        <tr><td colspan="2" style="text-align:center;color:#8b949e;">loading...</td></tr>  
-      </table>  
-    </div>  
-    <div class="modal-footer">  
-      <button onclick="refreshSysInfo()">Refresh</button>  
-    </div>  
-  </div>  
-</div>  
-  
-<!-- Installer log modal -->  
-<div class="modal-overlay" id="log-overlay">  
-  <div class="modal log-modal">  
-    <div class="modal-header">  
-      <div>  
-        <h3 style="display:inline;">Installer Log</h3>  
-        <span class="status" id="log-status"></span>  
-      </div>  
-      <button onclick="closeLog()">✕</button>  
-    </div>  
-    <div class="log-toolbar">  
-      <button class="log-filter-btn active" data-filter="all" onclick="setLogFilter('all')">  
-        All <span class="count" id="cnt-all">0</span>  
-      </button>  
-      <button class="log-filter-btn" data-filter="install" onclick="setLogFilter('install')">  
-        Installed <span class="count" id="cnt-install">0</span>  
-      </button>  
-      <button class="log-filter-btn" data-filter="skip" onclick="setLogFilter('skip')">  
-        Skipped <span class="count" id="cnt-skip">0</span>  
-      </button>  
-      <button class="log-filter-btn" data-filter="warn" onclick="setLogFilter('warn')">  
-        Warnings <span class="count" id="cnt-warn">0</span>  
-      </button>  
-      <button class="log-filter-btn" data-filter="error" onclick="setLogFilter('error')">  
-        Errors <span class="count" id="cnt-error">0</span>  
-      </button>  
-      <div class="log-spacer"></div>  
-      <label style="font-size:0.78rem;color:#8b949e;">  
-        Lines:  
-        <select id="log-lines" onchange="loadLog()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:0.78rem;">  
-          <option value="200">200</option>  
-          <option value="500" selected>500</option>  
-          <option value="1000">1000</option>  
-          <option value="5000">5000</option>  
-        </select>  
-      </label>  
-      <button class="log-filter-btn" onclick="loadLog()">↻ Refresh</button>  
-    </div>  
-    <div class="log-body" id="log-body">  
-      <div class="log-empty">loading...</div>  
-    </div>  
-    <div class="modal-footer">  
-      <button onclick="downloadLog()">Download</button>  
-      <button class="danger" onclick="clearLog()">Clear Log</button>  
-      <button onclick="closeLog()">Close</button>  
-    </div>  
-  </div>  
-</div>  
-  
-<!-- Index modal -->  
-<div class="modal-overlay" id="index-overlay">  
-  <div class="modal index-modal">  
-    <div class="modal-header">  
-      <div>  
-        <h3 style="display:inline;">Reference Repo Index</h3>  
-        <span class="status" id="index-status-text"></span>  
-      </div>  
-      <button onclick="closeIndex()">✕</button>  
-    </div>  
-    <div class="index-body">  
-      <div class="index-stats">  
-        <div class="index-stat">  
-          <div class="label">Files</div>  
-          <div class="value" id="index-count">--</div>  
-        </div>  
-        <div class="index-stat">  
-          <div class="label">Size</div>  
-          <div class="value" id="index-size">--</div>  
-        </div>  
-        <div class="index-stat">  
-          <div class="label">Built</div>  
-          <div class="value" id="index-mtime" style="font-size:0.85rem;">--</div>  
-        </div>  
-        <div class="index-stat">  
-          <div class="label">Watcher</div>  
-          <div class="value" id="index-watcher" style="font-size:0.85rem;">--</div>  
-        </div>  
-      </div>  
-  
-      <div style="display:flex; align-items:center; gap:12px; font-size:0.82rem; color:#8b949e;">  
-        <label style="cursor:pointer;">  
-          <input type="checkbox" id="index-all-sql">  
-          Index all SQL versions (slower, larger)  
-        </label>  
-      </div>  
-  
-      <div>  
-        <div style="font-size:0.72rem; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; font-weight:700; margin-bottom:6px;">  
-          Watcher Log  
-        </div>  
-        <pre class="update-log" id="index-log" style="max-height:40vh; border-radius:8px; border:1px solid var(--border);">loading...</pre>  
-      </div>  
-    </div>  
-    <div class="modal-footer">  
-      <button id="index-rebuild-btn" onclick="rebuildIndex()">Rebuild Now</button>  
-      <button onclick="closeIndex()">Close</button>  
-    </div>  
-  </div>  
-</div>  
-  
-<!-- Training modal -->  
-<div class="modal-overlay" id="training-overlay">  
-  <div class="modal training-modal">  
-    <div class="modal-header">  
-      <div>  
-        <h3 style="display:inline;">Model Training</h3>  
-        <span class="status" id="training-status-text"></span>  
-      </div>  
-      <button onclick="closeTraining()">✕</button>  
-    </div>  
-    <div class="training-body">  
-  
-      <div class="training-state" id="training-state-nodataset">  
-        <h4><span class="step-num">1</span> Build Training Dataset</h4>  
-        <p>Walk the reference repo and produce a JSONL dataset with thousands of  
-           instruction/response pairs. This runs on the Pi and takes 2–5 minutes.</p>  
-        <div class="actions">  
-          <button class="purple" id="training-build-btn" onclick="buildDataset()">Build Dataset</button>  
-        </div>  
-        <div class="note">  
-          Requires a reference repo cloned at <code>/data/reference/</code>.  
-        </div>  
-      </div>  
-  
-      <div class="training-state" id="training-state-dataset">  
-        <h4><span class="step-num">2</span> Train + Convert</h4>  
-        <p>Upload the dataset to Google Drive, open the Colab notebook, and run all cells.  
-           Training takes ~2 hours on a T4 GPU.</p>  
-        <div class="training-stats">  
-          <div class="training-stat">  
-            <div class="label">Examples</div>  
-            <div class="value" id="tdataset-count">--</div>  
-          </div>  
-          <div class="training-stat">  
-            <div class="label">Dataset size</div>  
-            <div class="value" id="tdataset-size">--</div>  
-          </div>  
-          <div class="training-stat">  
-            <div class="label">Built</div>  
-            <div class="value" id="tdataset-mtime" style="font-size:0.85rem;">--</div>  
-          </div>  
-        </div>  
-        <div class="actions">  
-          <button onclick="downloadDataset()">Download Dataset</button>  
-          <a href="https://colab.research.google.com/github/vekzla/DizerCore-AI.Assistant/blob/main/training/dizercore-colab.ipynb"  
-             target="_blank" rel="noopener" style="text-decoration:none;">  
-            <button class="purple">Open Colab Notebook ↗</button>  
-          </a>  
-          <button onclick="buildDataset()" style="margin-left:auto;">Rebuild</button>  
-        </div>  
-        <div class="note">  
-          1. Upload <code>dizercore-dataset.jsonl</code> to <code>MyDrive/dizercore/</code><br>  
-          2. Open the Colab notebook above<br>  
-          3. Runtime → Change runtime type → T4 GPU<br>  
-          4. Run all. Wait ~2 hours.<br>  
-          5. Download <code>dizercore-q4_k_m.gguf</code> from Drive.  
-        </div>  
-      </div>  
-  
-      <div class="training-state" id="training-state-upload">  
-        <h4><span class="step-num">3</span> Upload Trained Model</h4>  
-        <p>Upload the GGUF file that Colab produced. The Pi will validate it,  
-           deploy it, and restart the model server.</p>  
-        <label class="file-picker" for="training-file-input">  
-          <div class="icon">📁</div>  
-          <div class="text">  
-            <div class="filename" id="training-file-name">Choose a .gguf file</div>  
-            <div class="hint">Expected ~2 GB</div>  
-          </div>  
-          <input type="file" id="training-file-input" accept=".gguf" onchange="onTrainingFileSelected(this)">  
-        </label>  
-        <div class="training-progress" id="training-progress">  
-          <div class="training-progress-bar" id="training-progress-bar"></div>  
-        </div>  
-        <div class="actions">  
-          <button class="purple" id="training-upload-btn" onclick="uploadModel()" disabled>  
-            Upload &amp; Deploy  
-          </button>  
-          <button onclick="downloadDataset()" style="margin-left:auto;">Download Dataset</button>  
-        </div>  
-      </div>  
-  
-      <div class="training-state" id="training-state-deployed">  
-        <h4>✅ Custom Model Active</h4>  
-        <p>The Pi is running your trained DizerCore model. If quality regresses,  
-           click Revert to return to the base model.</p>  
-        <div class="training-stats">  
-          <div class="training-stat">  
-            <div class="label">Active model</div>  
-            <div class="value" id="tactive-model" style="font-size:0.75rem;">--</div>  
-          </div>  
-          <div class="training-stat">  
-            <div class="label">Trained model size</div>  
-            <div class="value" id="ttrained-size">--</div>  
-          </div>  
-        </div>  
-        <div class="actions">  
-          <button class="danger" id="training-revert-btn" onclick="revertModel()">Revert to Base Model</button>  
-          <button onclick="uploadAnotherModel()" style="margin-left:auto;">Upload Different Model</button>  
-        </div>  
-      </div>  
-  
-      <div class="training-log-wrap" id="training-log-wrap">  
-        <div class="label">Build Log</div>  
-        <pre class="training-log" id="training-log"></pre>  
-      </div>  
-  
-    </div>  
-    <div class="modal-footer">  
-      <button onclick="refreshTraining()">Refresh</button>  
-      <button onclick="closeTraining()">Close</button>  
-    </div>  
-  </div>  
+<body>
+<script>
+// ==========================================================================
+// API token bootstrap (Phase 1 — C1 fix)
+// Fetches the token from /api/token — an endpoint browsers can only read
+// same-origin — then wraps window.fetch so every existing call sends
+// X-DizerCore-Token automatically. Requests queue behind _ready so nothing
+// fires before the token arrives. The token is also exposed as
+// window.__dizerToken for the XMLHttpRequest in uploadModel().
+// ==========================================================================
+(function () {
+  var _fetch = window.fetch.bind(window);
+  var _token = null;
+  var _ready = _fetch("/api/token")
+    .then(function (r) { return r.ok ? r.json() : {}; })
+    .then(function (d) { _token = d.token || null; window.__dizerToken = _token; })
+    .catch(function () {});
+  window.fetch = function (url, opts) {
+    return _ready.then(function () {
+      opts = opts || {};
+      if (_token) {
+        var h = Object.assign({}, opts.headers);
+        h["X-DizerCore-Token"] = _token;
+        opts.headers = h;
+      }
+      return _fetch(url, opts);
+    });
+  };
+})();
+</script>
+
+<div class="header">
+  <img id="logo" src="/static/logo.png" alt="Logo" onerror="this.style.display='none'">
+  <h1>DizerCore AI Assistant</h1>
+  <div class="spacer"></div>
+
+  <div class="version-badge checking" id="version-badge" title="Click to re-check">
+    <span id="version-text">checking...</span>
+    <button class="version-update-btn" id="version-update-btn"
+            onclick="startUpdate(event)" style="display:none;">Update</button>
+  </div>
+
+  <button class="hdr-btn" onclick="showSysInfo()">System Info</button>
+  <button class="hdr-btn" onclick="showLog()" title="View installer log">
+    Logs <span id="log-dot"></span>
+  </button>
+  <button class="hdr-btn" onclick="showIndex()" title="Reference repo index">
+    Index <span id="index-dot"></span>
+  </button>
+  <button class="hdr-btn" onclick="showTraining()" title="Model training">
+    Training <span id="training-dot"></span>
+  </button>
+
+  <label class="logo-label" for="logo-upload">Set Logo</label>
+  <input type="file" id="logo-upload" class="logo-upload" accept="image/*" onchange="uploadLogo(this)">
 </div>
-<script>  
-// =============================================================================  
-// Clipboard — works on HTTP LAN, HTTPS, and localhost  
-// =============================================================================  
-function fallbackCopy(text) {  
-  const ta = document.createElement('textarea');  
-  ta.value = text;  
-  ta.setAttribute('readonly', '');  
-  ta.style.position = 'fixed';  
-  ta.style.top = '0';  
-  ta.style.left = '0';  
-  ta.style.width = '2em';  
-  ta.style.height = '2em';  
-  ta.style.padding = '0';  
-  ta.style.border = 'none';  
-  ta.style.outline = 'none';  
-  ta.style.boxShadow = 'none';  
-  ta.style.background = 'transparent';  
-  ta.style.opacity = '0';  
-  document.body.appendChild(ta);  
-  ta.focus();  
-  ta.select();  
-  ta.setSelectionRange(0, text.length);  
-  let ok = false;  
-  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }  
-  document.body.removeChild(ta);  
-  return ok;  
-}  
-  
-function copyToClipboard(text) {  
-  if (navigator.clipboard && window.isSecureContext) {  
-    return navigator.clipboard.writeText(text)  
-      .then(() => true)  
-      .catch(() => fallbackCopy(text));  
-  }  
-  return Promise.resolve(fallbackCopy(text));  
-}  
-  
-let pollTimer = null;  
-  
-// =============================================================================  
-// Prompt generation  
-// =============================================================================  
-async function generate() {  
-  const prompt = document.getElementById('prompt').value.trim();  
-  if (!prompt) return;  
-  const btn = document.getElementById('btn-generate');  
-  btn.disabled = true;  
-  btn.textContent = 'Refining...';  
-  const res = await fetch('/api/generate', {  
-    method: 'POST',  
-    headers: {'Content-Type':'application/json'},  
-    body: JSON.stringify({prompt})  
-  });  
-  const entry = await res.json();  
-  document.getElementById('output-section').style.display = 'block';  
-  document.getElementById('output').textContent = 'Waiting for model...';  
-  showMode(entry.mode, entry.sources, entry.search_source);  
-  pollEntry(entry.id);  
-  loadHistory();  
-  btn.disabled = false;  
-  btn.textContent = 'Refine Prompt';  
-}  
-  
-function showMode(mode, sources, searchSource) {  
-  const el = document.getElementById('output-mode');  
-  if (!mode) {  
-    el.style.display = 'none';  
-  } else {  
-    el.textContent = mode;  
-    el.className = 'mode-badge ' + mode;  
-    el.style.display = 'inline-block';  
-  }  
-  
-  const tag = document.getElementById('output-source');  
-  if (!searchSource) {  
-    tag.style.display = 'none';  
-  } else {  
-    tag.textContent = searchSource;  
-    tag.className = 'source-tag ' + searchSource;  
-    tag.style.display = 'inline-block';  
-  }  
-  
-  const srcRow = document.getElementById('output-sources');  
-  if (!sources || !sources.length) {  
-    srcRow.style.display = 'none';  
-    srcRow.innerHTML = '';  
-  } else {  
-    srcRow.style.display = 'flex';  
-    srcRow.innerHTML = '<span class="sources-label">searched:</span>' +  
-      sources.map(s => `<span class="source-chip" title="${escapeHtml(s)}">${escapeHtml(s)}</span>`).join('');  
-  }  
-}  
-  
-function pollEntry(id) {  
-  if (pollTimer) clearInterval(pollTimer);  
-  pollTimer = setInterval(async () => {  
-    const res = await fetch(`/api/history/${id}`);  
-    const entry = await res.json();  
-    if (['done','error','timeout'].includes(entry.status)) {  
-      clearInterval(pollTimer);  
-      document.getElementById('output').textContent = entry.refined || '(no output)';  
-      showMode(entry.mode, entry.sources, entry.search_source);  
-      loadHistory();  
-    }  
-  }, 2000);  
-}  
-  
-async function loadHistory() {  
-  const res = await fetch('/api/history');  
-  const history = await res.json();  
-  const list = document.getElementById('history-list');  
-  if (!history.length) {  
-    list.innerHTML = '<div class="empty">No prompts yet.</div>';  
-    return;  
-  }  
-  list.innerHTML = history.slice().reverse().map(e => `  
-    <div class="history-item" onclick="showEntry('${e.id}')">  
-      <div class="time">${new Date(e.timestamp*1000).toLocaleString()}  
-        ${e.mode ? `<span class="badge mode">${e.mode}</span>` : ''}  
-        <span class="badge ${e.status}">${e.status}</span>  
-      </div>  
-      <div class="preview">${escapeHtml(e.original.slice(0,80))}</div>  
-    </div>  
-  `).join('');  
-}  
-  
-async function showEntry(id) {  
-  const res = await fetch(`/api/history/${id}`);  
-  const entry = await res.json();  
-  document.getElementById('output-section').style.display = 'block';  
-  document.getElementById('output').textContent = entry.refined || '(no output yet)';  
-  showMode(entry.mode, entry.sources, entry.search_source);  
-}  
-  
-async function clearHistory() {  
-  await fetch('/api/history/clear', { method: 'POST' });  
-  loadHistory();  
-  document.getElementById('output-section').style.display = 'none';  
-  toast('History cleared');  
-}  
-  
-function clearInput() { document.getElementById('prompt').value = ''; }  
-  
-function copyOutput() {  
-  const text = document.getElementById('output').textContent;  
-  if (!text || text === 'Waiting for model...') {  
-    toast('Nothing to copy yet', true); return;  
-  }  
-  copyToClipboard(text).then(ok => {  
-    if (ok) toast('Copied!');  
-    else toast('Copy failed — select manually and Ctrl+C', true);  
-  });  
-}  
-  
-function copyLast() {  
-  const el = document.getElementById('output');  
-  const text = el ? el.textContent : '';  
-  if (!text || text === 'Waiting for model...') {  
-    toast('Nothing to copy', true); return;  
-  }  
-  copyToClipboard(text).then(ok => {  
-    if (ok) toast('Copied!');  
-    else toast('Copy failed — select manually and Ctrl+C', true);  
-  });  
-}  
-  
-async function uploadLogo(input) {  
-  const file = input.files[0];  
-  if (!file) return;  
-  const form = new FormData();  
-  form.append('logo', file);  
-  await fetch('/api/upload-logo', { method: 'POST', body: form });  
-  document.getElementById('logo').src = '/static/logo.png?' + Date.now();  
-  document.getElementById('logo').style.display = '';  
-  toast('Logo updated');  
-}  
-  
-function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }  
-function toast(msg, isError) {  
-  const t = document.getElementById('toast');  
-  t.textContent = msg;  
-  t.classList.toggle('error', !!isError);  
-  t.classList.add('show');  
-  setTimeout(() => t.classList.remove('show'), 2000);  
-}  
-  
-// =============================================================================  
-// NEW: authenticated file download helper  
-// window.location.href navigations cannot send X-DizerCore-Token, so GET  
-// downloads go through fetch -> blob -> object URL instead.  
-// =============================================================================  
-async function downloadApiFile(url, filename) {  
-  const res = await fetch(url);  
-  if (!res.ok) {  
-    const err = await res.json().catch(() => ({}));  
-    alert(err.error || 'Download failed');  
-    return;  
-  }  
-  const blob = await res.blob();  
-  const a = document.createElement('a');  
-  a.href = URL.createObjectURL(blob);  
-  a.download = filename;  
-  document.body.appendChild(a);  
-  a.click();  
-  document.body.removeChild(a);  
-  URL.revokeObjectURL(a.href);  
-}  
-  
-// =============================================================================  
-// Version check  
-// =============================================================================  
-let versionTimer = null;  
-  
-async function refreshVersion() {  
-  const badge = document.getElementById('version-badge');  
-  const text  = document.getElementById('version-text');  
-  const btn   = document.getElementById('version-update-btn');  
-  try {  
-    const res = await fetch('/api/version');  
-    const v = await res.json();  
-    if (v.up_to_date === null) {  
-      badge.className = 'version-badge error';  
-      text.textContent = '⚠ offline';  
-      btn.style.display = 'none';  
-    } else if (v.up_to_date) {  
-      badge.className = 'version-badge up-to-date';  
-      text.textContent = `✓ ${v.local_short}`;  
-      btn.style.display = 'none';  
-    } else {  
-      badge.className = 'version-badge out-of-date';  
-      text.textContent = `✗ ${v.remote_short}`;  
-      btn.style.display = 'inline-block';  
-    }  
-  } catch (e) {  
-    badge.className = 'version-badge error';  
-    text.textContent = '⚠ offline';  
-    btn.style.display = 'none';  
-  }  
-}  
-  
-document.getElementById('version-badge').addEventListener('click', (e) => {  
-  if (e.target.id === 'version-update-btn') return;  
-  refreshVersion();  
-});  
-  
-// =============================================================================  
-// Update runner  
-// =============================================================================  
-let updatePollTimer = null;  
-  
-async function startUpdate(event) {  
-  event.stopPropagation();  
-  const overlay  = document.getElementById('update-overlay');  
-  const logEl    = document.getElementById('update-log');  
-  const status   = document.getElementById('update-status');  
-  const closeBtn = document.getElementById('update-close-btn');  
-  const footer   = document.getElementById('update-footer');  
-  logEl.textContent = '';  
-  status.textContent = 'starting...';  
-  status.className = 'status running';  
-  closeBtn.disabled = true;  
-  footer.style.display = 'none';  
-  overlay.classList.add('show');  
-  const res = await fetch('/api/update', { method: 'POST' });  
-  if (!res.ok) {  
-    const err = await res.json().catch(() => ({}));  
-    status.textContent = err.error || 'failed to start';  
-    status.className = 'status error';  
-    closeBtn.disabled = false;  
-    return;  
-  }  
-  pollUpdate();  
-}  
-  
-function pollUpdate() {  
-  if (updatePollTimer) clearInterval(updatePollTimer);  
-  updatePollTimer = setInterval(async () => {  
-    try {  
-      const res = await fetch('/api/update/status');  
-      const s = await res.json();  
-      const logEl = document.getElementById('update-log');  
-      logEl.textContent = s.log || '';  
-      logEl.scrollTop = logEl.scrollHeight;  
-      const status   = document.getElementById('update-status');  
-      const closeBtn = document.getElementById('update-close-btn');  
-      const footer   = document.getElementById('update-footer');  
-      if (s.running) {  
-        status.textContent = 'running...';  
-        status.className = 'status running';  
-      } else if (s.exit_code === 0) {  
-        clearInterval(updatePollTimer);  
-        status.textContent = 'complete';  
-        status.className = 'status done';  
-        closeBtn.disabled = false;  
-        footer.style.display = 'flex';  
-        refreshVersion();  
-      } else {  
-        clearInterval(updatePollTimer);  
-        status.textContent = `failed (exit ${s.exit_code})`;  
-        status.className = 'status error';  
-        closeBtn.disabled = false;  
-        footer.style.display = 'flex';  
-      }  
-    } catch (e) {}  
-  }, 1500);  
-}  
-  
-function closeUpdate() {  
-  if (updatePollTimer) clearInterval(updatePollTimer);  
-  document.getElementById('update-overlay').classList.remove('show');  
-}  
-  
-// =============================================================================  
-// System info modal  
-// =============================================================================  
-function fmt(v) {  
-  if (v === null || v === undefined || v === '') {  
-    return '<span class="missing">not detected</span>';  
-  }  
-  return escapeHtml(String(v));  
-}  
-  
-async function loadSysInfo() {  
-  const tbody = document.getElementById('sysinfo-table');  
-  tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:#8b949e;">loading...</td></tr>';  
-  try {  
-    const res = await fetch('/api/system-info');  
-    let d;  
-    try { d = await res.json(); } catch (parseErr) {  
-      tbody.innerHTML = `<tr><td colspan="2" style="text-align:center;color:#f85149;">Server returned non-JSON (HTTP ${res.status}).<br>Check <code>journalctl -u prompt-gateway</code>.</td></tr>`;  
-      return;  
-    }  
-    if (!res.ok && d.error) {  
-      tbody.innerHTML = `<tr><td colspan="2" style="text-align:center;color:#f85149;">  
-        Server error: ${escapeHtml(d.error)}<br>  
-        <span style="font-size:0.75rem;color:#8b949e;">${escapeHtml(d.type || '')}</span>  
-      </td></tr>`;  
-      return;  
-    }  
-    let rows = `  
-      <tr class="section-row"><td colspan="2">DizerCore</td></tr>  
-      <tr><td>Commit</td><td>${fmt(d.dizercore_commit)}</td></tr>  
-      <tr><td>Date</td><td>${fmt(d.dizercore_date)}</td></tr>  
-  
-      <tr class="section-row"><td colspan="2">Services</td></tr>  
-      <tr><td>Docker</td><td>${fmt(d.docker)}</td></tr>  
-      <tr><td>Compose</td><td>${fmt(d.compose)}</td></tr>  
-      <tr><td>Gitea image</td><td>${fmt(d.gitea_image)}</td></tr>  
-      <tr><td>PostgreSQL image</td><td>${fmt(d.postgres_image)}</td></tr>  
-  
-      <tr class="section-row"><td colspan="2">Language Model</td></tr>  
-      <tr><td>llama.cpp</td><td>${fmt(d.llama_cpp)}</td></tr>  
-      <tr><td>llama-server</td><td>${fmt(d.llama_server)}</td></tr>  
-      <tr><td>llama-server RSS</td><td>${fmt(d.llama_server_rss)}</td></tr>  
-      <tr><td>Active model</td><td>${fmt(d.model)}</td></tr>  
-      <tr><td>Model size</td><td>${fmt(d.model_size)}</td></tr>  
-  
-      <tr class="section-row"><td colspan="2">Reference &amp; Index</td></tr>  
-      <tr><td>Reference repo</td><td>${fmt(d.reference_repo)}</td></tr>  
-      <tr><td>Index files</td><td>${fmt(d.index_files)}</td></tr>  
-      <tr><td>Index size</td><td>${fmt(d.index_size)}</td></tr>  
-      <tr><td>Index watcher</td><td>${fmt(d.watcher)}</td></tr>  
-      <tr><td>Last index build</td><td>${fmt(d.watcher_last_build)}</td></tr>  
-      <tr><td>AI busy</td><td>${fmt(d.ai_busy)}</td></tr>  
-  
-      <tr class="section-row"><td colspan="2">Training</td></tr>  
-      <tr><td>Dataset examples</td><td>${fmt(d.training_dataset_examples)}</td></tr>  
-      <tr><td>Dataset size</td><td>${fmt(d.training_dataset)}</td></tr>  
-      <tr><td>Trained model</td><td>${fmt(d.trained_model)}</td></tr>  
-  
-      <tr class="section-row"><td colspan="2">Usage</td></tr>  
-      <tr><td>History entries</td><td>${fmt(d.history_count)}</td></tr>  
-    `;  
-    if (d._errors && d._errors.length) {  
-      rows += `<tr class="error-row"><td colspan="2">  
-        ⚠ ${d._errors.length} field${d._errors.length === 1 ? '' : 's'} failed:  
-        ${d._errors.map(e => escapeHtml(e)).join(', ')}  
-      </td></tr>`;  
-    }  
-    tbody.innerHTML = rows;  
-  } catch (e) {  
-    tbody.innerHTML = `<tr><td colspan="2" style="text-align:center;color:#f85149;">  
-      Network error: ${escapeHtml(e.message || String(e))}<br>  
-      Is the Web UI service running?  
-    </td></tr>`;  
-  }  
-}  
-  
-function showSysInfo() {  
-  document.getElementById('sysinfo-overlay').classList.add('show');  
-  loadSysInfo();  
-}  
-function closeSysInfo() {  
-  document.getElementById('sysinfo-overlay').classList.remove('show');  
-}  
-function refreshSysInfo() { loadSysInfo(); }  
-  
-document.getElementById('sysinfo-overlay').addEventListener('click', (e) => {  
-  if (e.target.id === 'sysinfo-overlay') closeSysInfo();  
-});  
-  
-// =============================================================================  
-// Installer log modal  
-// =============================================================================  
-let logData = { lines: [], counts: { install:0, skip:0, warn:0, error:0, step:0 } };  
-let logFilter = 'all';  
-let logPollTimer = null;  
-  
-function classifyLine(line) {  
-  if (line.includes('[INSTALL]')) return 'install';  
-  if (line.includes('[SKIP'))    return 'skip';  
-  if (line.includes('[WARN'))    return 'warn';  
-  if (line.includes('[ERROR'))   return 'error';  
-  if (line.includes('[STEP'))    return 'step';  
-  return 'other';  
-}  
-  
-function renderLog() {  
-  const body = document.getElementById('log-body');  
-  const lines = logData.lines || [];  
-  const filtered = logFilter === 'all'  
-    ? lines  
-    : lines.filter(l => classifyLine(l) === logFilter);  
-  if (!filtered.length) {  
-    body.innerHTML = '<div class="log-empty">No lines match this filter.</div>';  
-    return;  
-  }  
-  const html = filtered.map(line => {  
-    const cls = classifyLine(line);  
-    return `<div class="log-line tag-${cls}">${escapeHtml(line)}</div>`;  
-  }).join('');  
-  body.innerHTML = `<div class="log-lines">${html}</div>`;  
-  body.scrollTop = body.scrollHeight;  
-}  
-  
-function updateLogCounts(c) {  
-  document.getElementById('cnt-install').textContent = c.install || 0;  
-  document.getElementById('cnt-skip').textContent    = c.skip || 0;  
-  document.getElementById('cnt-warn').textContent    = c.warn || 0;  
-  document.getElementById('cnt-error').textContent   = c.error || 0;  
-  document.getElementById('cnt-all').textContent     =  
-    (c.install || 0) + (c.skip || 0) + (c.warn || 0) + (c.error || 0) + (c.step || 0);  
-  const dot = document.getElementById('log-dot');  
-  if ((c.error || 0) > 0) dot.className = 'dot err';  
-  else if ((c.warn || 0) > 0) dot.className = 'dot warn';  
-  else dot.className = '';  
-}  
-  
-async function loadLog() {  
-  const lines = document.getElementById('log-lines').value || '500';  
-  const status = document.getElementById('log-status');  
-  status.textContent = 'loading...';  
-  status.className = 'status running';  
-  try {  
-    const res = await fetch(`/api/log?lines=${lines}`);  
-    const d = await res.json();  
-    if (d.error) { status.textContent = d.error; status.className = 'status error'; return; }  
-    if (!d.exists) {  
-      document.getElementById('log-body').innerHTML =  
-        '<div class="log-empty">Log file not found yet.<br>Run the installer to create it.</div>';  
-      status.textContent = 'not found';  
-      status.className = 'status error';  
-      return;  
-    }  
-    logData = d;  
-    updateLogCounts(d.counts);  
-    renderLog();  
-    status.textContent = `${d.shown_lines} of ${d.total_lines} lines · ${(d.size/1024).toFixed(1)} KB`;  
-    status.className = 'status';  
-  } catch (e) {  
-    status.textContent = 'failed to load';  
-    status.className = 'status error';  
-  }  
-}  
-  
-function setLogFilter(f) {  
-  logFilter = f;  
-  document.querySelectorAll('.log-filter-btn[data-filter]').forEach(b => {  
-    b.classList.toggle('active', b.dataset.filter === f);  
-  });  
-  renderLog();  
-}  
-  
-function showLog() {  
-  document.getElementById('log-overlay').classList.add('show');  
-  loadLog();  
-  if (logPollTimer) clearInterval(logPollTimer);  
-  logPollTimer = setInterval(loadLog, 5000);  
-}  
-  
-function closeLog() {  
-  document.getElementById('log-overlay').classList.remove('show');  
-  if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }  
-}  
-  
-// NEW: was window.location.href — navigation can't send the auth header  
-function downloadLog() { downloadApiFile('/api/log/download', 'dizercore-install.log'); }  
-  
-async function clearLog() {  
-  if (!confirm('Clear the installer log? This cannot be undone.')) return;  
-  const res = await fetch('/api/log/clear', { method: 'POST' });  
-  const d = await res.json();  
-  if (!res.ok) { alert(d.error || 'Failed to clear log'); return; }  
-  toast('Log cleared');  
-  loadLog();  
-}  
-  
-document.getElementById('log-overlay').addEventListener('click', (e) => {  
-  if (e.target.id === 'log-overlay') closeLog();  
-});  
-  
-// =============================================================================  
-// Index modal  
-// =============================================================================  
-let indexPollTimer = null;  
-  
-function formatBytes(bytes) {  
-  if (!bytes) return '--';  
-  if (bytes < 1024) return bytes + ' B';  
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';  
-  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';  
-  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';  
-}  
-  
-function formatRelativeTime(mtime) {  
-  if (!mtime) return '--';  
-  const diff = Date.now() / 1000 - mtime;  
-  if (diff < 60) return 'just now';  
-  if (diff < 3600) return Math.floor(diff / 60) + ' min ago';  
-  if (diff < 86400) return Math.floor(diff / 3600) + ' hours ago';  
-  return Math.floor(diff / 86400) + ' days ago';  
-}  
-  
-async function loadIndexStatus() {  
-  const status = document.getElementById('index-status-text');  
-  const log = document.getElementById('index-log');  
-  const countEl = document.getElementById('index-count');  
-  const sizeEl = document.getElementById('index-size');  
-  const mtimeEl = document.getElementById('index-mtime');  
-  const watcherEl = document.getElementById('index-watcher');  
-  
-  try {  
-    const res = await fetch('/api/index/status');  
-    const d = await res.json();  
-  
-    countEl.textContent = d.count != null ? d.count.toLocaleString() : '--';  
-    sizeEl.textContent = formatBytes(d.size);  
-    mtimeEl.textContent = d.mtime ? formatRelativeTime(d.mtime) : '--';  
-    watcherEl.textContent = d.watcher_up ? 'up' : 'down';  
-    watcherEl.style.color = d.watcher_up ? 'var(--green)' : 'var(--red)';  
-  
-    if (d.running) {  
-      status.textContent = 'rebuilding...';  
-      status.className = 'status running';  
-      document.getElementById('index-dot').className = '';  
-    } else if (!d.exists) {  
-      status.textContent = 'no index';  
-      status.className = 'status error';  
-      document.getElementById('index-dot').className = 'dot warn';  
-    } else if (d.watcher_last_build_status && d.watcher_last_build_status.startsWith('error')) {  
-      status.textContent = d.watcher_last_build_status;  
-      status.className = 'status error';  
-      document.getElementById('index-dot').className = 'dot err';  
-    } else {  
-      status.textContent = `ready · ${d.count} files · ${formatBytes(d.size)}`;  
-      status.className = 'status done';  
-      document.getElementById('index-dot').className = 'dot ok';  
-    }  
-  
-    log.textContent = d.log || '(no recent activity)';  
-    log.scrollTop = log.scrollHeight;  
-  } catch (e) {  
-    status.textContent = 'error';  
-    status.className = 'status error';  
-  }  
-}  
-  
-async function rebuildIndex() {  
-  const allSql = document.getElementById('index-all-sql').checked;  
-  const btn = document.getElementById('index-rebuild-btn');  
-  btn.disabled = true;  
-  const res = await fetch(`/api/index/rebuild?all_sql=${allSql ? '1' : '0'}`, { method: 'POST' });  
-  if (!res.ok) {  
-    const err = await res.json().catch(() => ({}));  
-    alert(err.error || 'Failed to start index rebuild');  
-    btn.disabled = false;  
-    return;  
-  }  
-  if (indexPollTimer) clearInterval(indexPollTimer);  
-  indexPollTimer = setInterval(async () => {  
-    await loadIndexStatus();  
-    const res = await fetch('/api/index/status');  
-    const d = await res.json();  
-    if (!d.running) {  
-      clearInterval(indexPollTimer);  
-      indexPollTimer = null;  
-      btn.disabled = false;  
-    }  
-  }, 2000);  
-  await loadIndexStatus();  
-}  
-  
-function showIndex() {  
-  document.getElementById('index-overlay').classList.add('show');  
-  loadIndexStatus();  
-  if (indexPollTimer) clearInterval(indexPollTimer);  
-  indexPollTimer = setInterval(loadIndexStatus, 3000);  
-}  
-  
-function closeIndex() {  
-  document.getElementById('index-overlay').classList.remove('show');  
-  if (indexPollTimer) { clearInterval(indexPollTimer); indexPollTimer = null; }  
-}  
-  
-document.getElementById('index-overlay').addEventListener('click', (e) => {  
-  if (e.target.id === 'index-overlay') closeIndex();  
-});  
-  
-// =============================================================================  
-// Training modal  
-// =============================================================================  
-let trainingPollTimer = null;  
-let trainingBuildPollTimer = null;  
-  
-function showTrainingState(state) {  
-  document.querySelectorAll('.training-state').forEach(el => el.classList.remove('active'));  
-  const el = document.getElementById('training-state-' + state);  
-  if (el) el.classList.add('active');  
-}  
-  
-function setTrainingDot(kind) {  
-  const dot = document.getElementById('training-dot');  
-  dot.className = 'dot' + (kind ? ' ' + kind : '');  
-}  
-  
-async function loadTrainingStatus() {  
-  const status = document.getElementById('training-status-text');  
-  try {  
-    const res = await fetch('/api/training/status');  
-    const d = await res.json();  
-  
-    const ds = d.dataset || {};  
-    const tm = d.trained_model || {};  
-    const active = d.active_kind;  
-  
-    document.getElementById('tdataset-count').textContent =  
-      ds.count ? ds.count.toLocaleString() : '--';  
-    document.getElementById('tdataset-size').textContent = formatBytes(ds.size);  
-    document.getElementById('tdataset-mtime').textContent =  
-      ds.mtime ? formatRelativeTime(ds.mtime) : '--';  
-  
-    document.getElementById('tactive-model').textContent =  
-      d.active_model ? d.active_model.split('/').pop() : '--';  
-    document.getElementById('ttrained-size').textContent =  
-      tm.exists ? formatBytes(tm.size) : '--';  
-  
-    if (active === 'trained') {  
-      status.textContent = 'trained model active';  
-      status.className = 'status done';  
-      showTrainingState('deployed');  
-      setTrainingDot('active');  
-    } else if (ds.exists) {  
-      status.textContent = `${ds.count} examples ready`;  
-      status.className = 'status done';  
-      showTrainingState('upload');  
-      setTrainingDot('warn');  
-    } else {  
-      status.textContent = 'no dataset';  
-      status.className = 'status error';  
-      showTrainingState('nodataset');  
-      setTrainingDot('warn');  
-    }  
-  } catch (e) {  
-    status.textContent = 'error';  
-    status.className = 'status error';  
-  }  
-}  
-  
-async function loadTrainingBuildStatus() {  
-  try {  
-    const res = await fetch('/api/training/build-dataset/status');  
-    const d = await res.json();  
-    const wrap = document.getElementById('training-log-wrap');  
-    const log = document.getElementById('training-log');  
-    const btn = document.getElementById('training-build-btn');  
-  
-    if (d.building) {  
-      wrap.classList.add('show');  
-      log.textContent = d.log || 'starting...';  
-      log.scrollTop = log.scrollHeight;  
-      if (btn) { btn.disabled = true; btn.textContent = 'Building...'; }  
-    } else {  
-      if (btn) { btn.disabled = false; btn.textContent = 'Build Dataset'; }  
-      if (d.exit_code !== null && d.exit_code !== undefined) {  
-        wrap.classList.add('show');  
-        log.textContent = d.log || '';  
-        if (trainingBuildPollTimer) {  
-          clearInterval(trainingBuildPollTimer);  
-          trainingBuildPollTimer = null;  
-        }  
-        await loadTrainingStatus();  
-      }  
-    }  
-  } catch (e) {}  
-}  
-  
-async function buildDataset() {  
-  const btn = document.getElementById('training-build-btn');  
-  btn.disabled = true;  
-  btn.textContent = 'Building...';  
-  const res = await fetch('/api/training/build-dataset', { method: 'POST' });  
-  if (!res.ok) {  
-    const err = await res.json().catch(() => ({}));  
-    alert(err.error || 'Failed to start dataset build');  
-    btn.disabled = false;  
-    btn.textContent = 'Build Dataset';  
-    return;  
-  }  
-  document.getElementById('training-log-wrap').classList.add('show');  
-  document.getElementById('training-log').textContent = 'starting...';  
-  
-  if (trainingBuildPollTimer) clearInterval(trainingBuildPollTimer);  
-  trainingBuildPollTimer = setInterval(loadTrainingBuildStatus, 1500);  
-  await loadTrainingBuildStatus();  
-}  
-  
-// NEW: was window.location.href — navigation can't send the auth header  
-function downloadDataset() {  
-  downloadApiFile('/api/training/dataset/download', 'dizercore-dataset.jsonl');  
-}  
-  
-function onTrainingFileSelected(input) {  
-  const file = input.files[0];  
-  const nameEl = document.getElementById('training-file-name');  
-  const btn = document.getElementById('training-upload-btn');  
-  if (!file) {  
-    nameEl.textContent = 'Choose a .gguf file';  
-    btn.disabled = true;  
-    return;  
-  }  
-  const sizeMB = (file.size / (1024 * 1024)).toFixed(0);  
-  nameEl.textContent = `${file.name} (${sizeMB} MB)`;  
-  btn.disabled = false;  
-}  
-  
-async function uploadModel() {  
-  const input = document.getElementById('training-file-input');  
-  const file = input.files[0];  
-  if (!file) return;  
-  
-  const btn = document.getElementById('training-upload-btn');  
-  const progress = document.getElementById('training-progress');  
-  const bar = document.getElementById('training-progress-bar');  
-  const status = document.getElementById('training-status-text');  
-  
-  btn.disabled = true;  
-  btn.textContent = 'Uploading...';  
-  progress.classList.add('show');  
-  bar.style.width = '0%';  
-  status.textContent = 'uploading...';  
-  status.className = 'status running';  
-  
-  const form = new FormData();  
-  form.append('model', file);  
-  
-  return new Promise((resolve) => {  
-    const xhr = new XMLHttpRequest();  
-    xhr.upload.addEventListener('progress', (e) => {  
-      if (e.lengthComputable) {  
-        const pct = (e.loaded / e.total) * 100;  
-        bar.style.width = pct + '%';  
-        status.textContent = `uploading ${pct.toFixed(0)}%`;  
-      }  
-    });  
-    xhr.addEventListener('load', async () => {  
-      progress.classList.remove('show');  
-      btn.textContent = 'Upload & Deploy';  
-      if (xhr.status >= 200 && xhr.status < 300) {  
-        toast('Model deployed');  
-        input.value = '';  
-        document.getElementById('training-file-name').textContent = 'Choose a .gguf file';  
-        await loadTrainingStatus();  
-      } else {  
-        let err = 'Upload failed';  
-        try { err = JSON.parse(xhr.responseText).error || err; } catch (e) {}  
-        alert(err);  
-        btn.disabled = false;  
-        status.textContent = 'upload failed';  
-        status.className = 'status error';  
-      }  
-      resolve();  
-    });  
-    xhr.addEventListener('error', () => {  
-      progress.classList.remove('show');  
-      btn.disabled = false;  
-      btn.textContent = 'Upload & Deploy';  
-      status.textContent = 'network error';  
-      status.className = 'status error';  
-      resolve();  
-    });  
-    xhr.open('POST', '/api/training/upload-model');  
-    // NEW: XHR bypasses the fetch wrapper — send the token explicitly  
-    if (window.__dizerToken) {  
-      xhr.setRequestHeader('X-DizerCore-Token', window.__dizerToken);  
-    }  
-    xhr.send(form);  
-  });  
-}  
-  
-function uploadAnotherModel() {  
-  showTrainingState('upload');  
-  document.getElementById('training-file-input').value = '';  
-  document.getElementById('training-file-name').textContent = 'Choose a .gguf file';  
-  document.getElementById('training-upload-btn').disabled = true;  
-}  
-  
-async function revertModel() {  
-  if (!confirm('Revert to the base model? Your trained model stays on disk.')) return;  
-  const btn = document.getElementById('training-revert-btn');  
-  btn.disabled = true;  
-  btn.textContent = 'Reverting...';  
-  const res = await fetch('/api/training/revert', { method: 'POST' });  
-  btn.disabled = false;  
-  btn.textContent = 'Revert to Base Model';  
-  if (!res.ok) {  
-    const err = await res.json().catch(() => ({}));  
-    alert(err.error || 'Revert failed');  
-    return;  
-  }  
-  toast('Reverted to base model');  
-  await loadTrainingStatus();  
-}  
-  
-function showTraining() {  
-  document.getElementById('training-overlay').classList.add('show');  
-  loadTrainingStatus();  
-  loadTrainingBuildStatus();  
-  if (trainingPollTimer) clearInterval(trainingPollTimer);  
-  trainingPollTimer = setInterval(loadTrainingStatus, 5000);  
-}  
-  
-function closeTraining() {  
-  document.getElementById('training-overlay').classList.remove('show');  
-  if (trainingPollTimer) { clearInterval(trainingPollTimer); trainingPollTimer = null; }  
-  if (trainingBuildPollTimer) { clearInterval(trainingBuildPollTimer); trainingBuildPollTimer = null; }  
-}  
-  
-function refreshTraining() {  
-  loadTrainingStatus();  
-  loadTrainingBuildStatus();  
-}  
-  
-document.getElementById('training-overlay').addEventListener('click', (e) => {  
-  if (e.target.id === 'training-overlay') closeTraining();  
-});  
-  
-// =============================================================================  
-// Live system stats  
-// =============================================================================  
-let statsTimer = null;  
-  
-function setBar(id, pct, warnAt, critAt) {  
-  const el = document.getElementById('bar-' + id);  
-  const stat = document.getElementById('stat-' + id);  
-  if (!el) return;  
-  const clamped = Math.max(0, Math.min(100, pct));  
-  el.style.width = clamped + '%';  
-  el.classList.remove('warn', 'crit');  
-  stat.classList.remove('warn', 'crit');  
-  if (critAt !== undefined && pct >= critAt) {  
-    el.classList.add('crit'); stat.classList.add('crit');  
-  } else if (warnAt !== undefined && pct >= warnAt) {  
-    el.classList.add('warn'); stat.classList.add('warn');  
-  }  
-}  
-  
-async function refreshStats() {  
-  try {  
-    const res = await fetch('/api/system-stats');  
-    const d = await res.json();  
-  
-    setBar('cpu', d.cpu.percent, 60, 85);  
-    document.getElementById('val-cpu').textContent = `${d.cpu.percent.toFixed(0)}%`;  
-    document.getElementById('stat-cpu').title =  
-      `CPU: ${d.cpu.percent.toFixed(1)}% over ${d.cpu.cores} cores\n` +  
-      (d.cpu.freq_mhz ? `Clock: ${d.cpu.freq_mhz} MHz\n` : '') +  
-      `Load: ${d.cpu.load[0]} / ${d.cpu.load[1]} / ${d.cpu.load[2]}\n` +  
-      `Per-core: ${d.cpu.per_core.join('%, ')}%`;  
-  
-    setBar('ram', d.memory.percent, 75, 90);  
-    const usedG = (d.memory.used_mb / 1024).toFixed(1);  
-    const totalG = (d.memory.total_mb / 1024).toFixed(0);  
-    document.getElementById('val-ram').textContent = `${usedG} / ${totalG} G`;  
-    document.getElementById('stat-ram').title =  
-      `Memory: ${d.memory.used_mb} MB used of ${d.memory.total_mb} MB (${d.memory.percent}%)\n` +  
-      `Swap:  ${d.swap.used_mb} MB of ${d.swap.total_mb} MB (${d.swap.percent}%)`;  
-  
-    setBar('disk', d.disk.percent, 75, 90);  
-    document.getElementById('val-disk').textContent =  
-      `${d.disk.used_gb.toFixed(0)} / ${d.disk.total_gb.toFixed(0)} G`;  
-    document.getElementById('stat-disk').title =  
-      `NVMe ${d.disk.mount}: ${d.disk.used_gb} GB used of ${d.disk.total_gb} GB (${d.disk.percent}%)`;  
-  
-    if (d.temp_c !== null && d.temp_c !== undefined) {  
-      setBar('temp', d.temp_c, 65, 80);  
-      document.getElementById('val-temp').textContent = `${d.temp_c.toFixed(1)}°C`;  
-      let tempNote = 'normal';  
-      if (d.temp_c >= 80) tempNote = 'throttling range';  
-      else if (d.temp_c >= 65) tempNote = 'warm';  
-      document.getElementById('stat-temp').title = `CPU temperature: ${d.temp_c}°C (${tempNote})`;  
-    } else {  
-      document.getElementById('val-temp').textContent = 'n/a';  
-      document.getElementById('stat-temp').title = 'Temperature sensor unavailable';  
-    }  
-  
-    const gpuEl = document.getElementById('val-gpu');  
-    const gpuStat = document.getElementById('stat-gpu');  
-    gpuStat.classList.remove('throttled');  
-    if (d.gpu_mhz) gpuEl.textContent = `${d.gpu_mhz} MHz`;  
-    else gpuEl.textContent = 'n/a';  
-    let gpuTitle = `GPU V3D clock: ${d.gpu_mhz || 'n/a'} MHz`;  
-    if (d.throttle) {  
-      if (d.throttle.current) {  
-        gpuStat.classList.add('throttled');  
-        gpuEl.textContent += ' ⚠';  
-        gpuTitle += `\n⚠ Currently throttled (${d.throttle.raw})`;  
-      } else if (d.throttle.occurred) {  
-        gpuStat.classList.add('throttled');  
-        gpuEl.textContent += ' ⚠';  
-        gpuTitle += `\n⚠ Throttling has occurred (${d.throttle.raw})`;  
-      } else {  
-        gpuTitle += `\nNo throttling (${d.throttle.raw})`;  
-      }  
-    }  
-    gpuStat.title = gpuTitle;  
-  } catch (e) {}  
-}  
-  
-function startStats() {  
-  refreshStats();  
-  if (statsTimer) clearInterval(statsTimer);  
-  statsTimer = setInterval(refreshStats, 3000);  
-}  
-  
-document.addEventListener('visibilitychange', () => {  
-  if (document.hidden) {  
-    if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }  
-  } else {  
-    startStats();  
-  }  
-});  
-  
-// =============================================================================  
-// Init  
-// =============================================================================  
-refreshVersion();  
-versionTimer = setInterval(refreshVersion, 60000);  
-  
-loadHistory();  
-startStats();  
-  
-fetch('/api/log?lines=1').then(r => r.json()).then(d => {  
-  if (d.counts) updateLogCounts(d.counts);  
-}).catch(() => {});  
-  
-fetch('/api/index/status').then(r => r.json()).then(d => {  
-  const dot = document.getElementById('index-dot');  
-  if (!d.exists) dot.className = 'dot warn';  
-  else if (d.running) dot.className = '';  
-  else if (d.watcher_last_build_status && d.watcher_last_build_status.startsWith('error')) dot.className = 'dot err';  
-  else dot.className = 'dot ok';  
-}).catch(() => {});  
-  
-fetch('/api/training/status').then(r => r.json()).then(d => {  
-  if (d.active_kind === 'trained') setTrainingDot('active');  
-  else setTrainingDot('warn');  
-}).catch(() => {});  
-</script>  
-</body>  
+
+<div class="stats-bar" id="stats-bar">
+  <div class="stat" id="stat-cpu" title="CPU usage">
+    <div class="stat-label">CPU</div>
+    <div class="stat-value" id="val-cpu">--</div>
+    <div class="stat-bar"><div class="stat-fill" id="bar-cpu"></div></div>
+  </div>
+  <div class="stat" id="stat-ram" title="Memory usage">
+    <div class="stat-label">RAM</div>
+    <div class="stat-value" id="val-ram">--</div>
+    <div class="stat-bar"><div class="stat-fill" id="bar-ram"></div></div>
+  </div>
+  <div class="stat" id="stat-disk" title="NVMe usage on /data">
+    <div class="stat-label">DISK</div>
+    <div class="stat-value" id="val-disk">--</div>
+    <div class="stat-bar"><div class="stat-fill" id="bar-disk"></div></div>
+  </div>
+  <div class="stat" id="stat-temp" title="CPU temperature">
+    <div class="stat-label">TEMP</div>
+    <div class="stat-value" id="val-temp">--</div>
+    <div class="stat-bar"><div class="stat-fill" id="bar-temp"></div></div>
+  </div>
+  <div class="stat" id="stat-gpu" title="GPU clock / throttle status">
+    <div class="stat-label">GPU</div>
+    <div class="stat-value" id="val-gpu">--</div>
+    <div class="stat-bar"><div class="stat-fill" id="bar-gpu" style="width:0%; background:transparent;"></div></div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main">
+    <h3 style="margin-bottom:10px;">Your rough prompt</h3>
+    <textarea id="prompt" placeholder="e.g., fix spell target positions in SpellMgr.cpp"></textarea>
+    <div class="btn-row">
+      <button class="primary" id="btn-generate" onclick="generate()">Refine Prompt</button>
+      <button onclick="clearInput()">Clear Input</button>
+      <button onclick="copyLast()">Copy Last Output</button>
+    </div>
+    <div class="output" id="output-section" style="display:none;">
+      <div class="output-header">
+        <div class="output-title">
+          <h3>Refined Prompt</h3>
+          <span class="mode-badge" id="output-mode" style="display:none;"></span>
+          <span class="source-tag" id="output-source" style="display:none;"></span>
+        </div>
+        <button onclick="copyOutput()">Copy</button>
+      </div>
+      <pre id="output"></pre>
+
+      <!-- Reasoning panel — shown only when the model produces a thinking block -->
+      <details id="output-reasoning-wrap" style="display:none;">
+        <summary>Reasoning (model's internal thinking)</summary>
+        <pre id="output-reasoning"></pre>
+      </details>
+
+      <div class="sources-row" id="output-sources" style="display:none;"></div>
+    </div>
+  </div>
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h2>History</h2>
+      <button class="danger" onclick="clearHistory()" style="font-size:0.75rem;padding:4px 10px;">Clear All</button>
+    </div>
+    <div class="history-list" id="history-list">
+      <div class="empty">No prompts yet.</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Update modal -->
+<div class="modal-overlay" id="update-overlay">
+  <div class="modal update-modal">
+    <div class="modal-header">
+      <div>
+        <h3 style="display:inline;">Updating DizerCore</h3>
+        <span class="status" id="update-status">starting...</span>
+      </div>
+      <button onclick="closeUpdate()" id="update-close-btn" disabled>✕</button>
+    </div>
+    <pre class="update-log" id="update-log"></pre>
+    <div class="modal-footer" id="update-footer" style="display:none;">
+      <button onclick="location.reload()">Reload Page</button>
+      <button onclick="closeUpdate()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- System info modal -->
+<div class="modal-overlay" id="sysinfo-overlay">
+  <div class="modal sysinfo-modal">
+    <div class="modal-header">
+      <h3>System Info</h3>
+      <button onclick="closeSysInfo()">✕</button>
+    </div>
+    <div class="sysinfo-body">
+      <table class="sysinfo-table" id="sysinfo-table">
+        <tr><td colspan="2" style="text-align:center;color:#8b949e;">loading...</td></tr>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button onclick="refreshSysInfo()">Refresh</button>
+    </div>
+  </div>
+</div>
+
+<!-- Installer log modal -->
+<div class="modal-overlay" id="log-overlay">
+  <div class="modal log-modal">
+    <div class="modal-header">
+      <div>
+        <h3 style="display:inline;">Installer Log</h3>
+        <span class="status" id="log-status"></span>
+      </div>
+      <button onclick="closeLog()">✕</button>
+    </div>
+    <div class="log-toolbar">
+      <button class="log-filter-btn active" data-filter="all" onclick="setLogFilter('all')">
+        All <span class="count" id="cnt-all">0</span>
+      </button>
+      <button class="log-filter-btn" data-filter="install" onclick="setLogFilter('install')">
+        Installed <span class="count" id="cnt-install">0</span>
+      </button>
+      <button class="log-filter-btn" data-filter="skip" onclick="setLogFilter('skip')">
+        Skipped <span class="count" id="cnt-skip">0</span>
+      </button>
+      <button class="log-filter-btn" data-filter="warn" onclick="setLogFilter('warn')">
+        Warnings <span class="count" id="cnt-warn">0</span>
+      </button>
+      <button class="log-filter-btn" data-filter="error" onclick="setLogFilter('error')">
+        Errors <span class="count" id="cnt-error">0</span>
+      </button>
+      <div class="log-spacer"></div>
+      <label style="font-size:0.78rem;color:#8b949e;">
+        Lines:
+        <select id="log-lines" onchange="loadLog()" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:0.78rem;">
+          <option value="200">200</option>
+          <option value="500" selected>500</option>
+          <option value="1000">1000</option>
+          <option value="5000">5000</option>
+        </select>
+      </label>
+      <button class="log-filter-btn" onclick="loadLog()">↻ Refresh</button>
+    </div>
+    <div class="log-body" id="log-body">
+      <div class="log-empty">loading...</div>
+    </div>
+    <div class="modal-footer">
+      <button onclick="downloadLog()">Download</button>
+      <button class="danger" onclick="clearLog()">Clear Log</button>
+      <button onclick="closeLog()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Index modal -->
+<div class="modal-overlay" id="index-overlay">
+  <div class="modal index-modal">
+    <div class="modal-header">
+      <div>
+        <h3 style="display:inline;">Reference Repo Index</h3>
+        <span class="status" id="index-status-text"></span>
+      </div>
+      <button onclick="closeIndex()">✕</button>
+    </div>
+    <div class="index-body">
+      <div class="index-stats">
+        <div class="index-stat">
+          <div class="label">Files</div>
+          <div class="value" id="index-count">--</div>
+        </div>
+        <div class="index-stat">
+          <div class="label">Size</div>
+          <div class="value" id="index-size">--</div>
+        </div>
+        <div class="index-stat">
+          <div class="label">Built</div>
+          <div class="value" id="index-mtime" style="font-size:0.85rem;">--</div>
+        </div>
+        <div class="index-stat">
+          <div class="label">Watcher</div>
+          <div class="value" id="index-watcher" style="font-size:0.85rem;">--</div>
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:12px; font-size:0.82rem; color:#8b949e;">
+        <label style="cursor:pointer;">
+          <input type="checkbox" id="index-all-sql">
+          Index all SQL versions (slower, larger)
+        </label>
+      </div>
+
+      <div>
+        <div style="font-size:0.72rem; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; font-weight:700; margin-bottom:6px;">
+          Watcher Log
+        </div>
+        <pre class="update-log" id="index-log" style="max-height:40vh; border-radius:8px; border:1px solid var(--border);">loading...</pre>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="index-rebuild-btn" onclick="rebuildIndex()">Rebuild Now</button>
+      <button onclick="closeIndex()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Training modal -->
+<div class="modal-overlay" id="training-overlay">
+  <div class="modal training-modal">
+    <div class="modal-header">
+      <div>
+        <h3 style="display:inline;">Model Training</h3>
+        <span class="status" id="training-status-text"></span>
+      </div>
+      <button onclick="closeTraining()">✕</button>
+    </div>
+    <div class="training-body">
+
+      <div class="training-state" id="training-state-nodataset">
+        <h4><span class="step-num">1</span> Build Training Dataset</h4>
+        <p>Walk the reference repo and produce a JSONL dataset with thousands of
+           instruction/response pairs. This runs on the Pi and takes 2–5 minutes.</p>
+        <div class="actions">
+          <button class="purple" id="training-build-btn" onclick="buildDataset()">Build Dataset</button>
+        </div>
+        <div class="note">
+          Requires a reference repo cloned at <code>/data/reference/</code>.
+        </div>
+      </div>
+
+      <div class="training-state" id="training-state-dataset">
+        <h4><span class="step-num">2</span> Train + Convert</h4>
+        <p>Upload the dataset to Google Drive, open the Colab notebook, and run all cells.
+           Training takes ~2 hours on a T4 GPU.</p>
+        <div class="training-stats">
+          <div class="training-stat">
+            <div class="label">Examples</div>
+            <div class="value" id="tdataset-count">--</div>
+          </div>
+          <div class="training-stat">
+            <div class="label">Dataset size</div>
+            <div class="value" id="tdataset-size">--</div>
+          </div>
+          <div class="training-stat">
+            <div class="label">Built</div>
+            <div class="value" id="tdataset-mtime" style="font-size:0.85rem;">--</div>
+          </div>
+        </div>
+        <div class="actions">
+          <button onclick="downloadDataset()">Download Dataset</button>
+          <a href="https://colab.research.google.com/github/vekzla/DizerCore-AI.Assistant/blob/main/training/dizercore-colab.ipynb"
+             target="_blank" rel="noopener" style="text-decoration:none;">
+            <button class="purple">Open Colab Notebook ↗</button>
+          </a>
+          <button onclick="buildDataset()" style="margin-left:auto;">Rebuild</button>
+        </div>
+        <div class="note">
+          1. Upload <code>dizercore-dataset.jsonl</code> to <code>MyDrive/dizercore/</code><br>
+          2. Open the Colab notebook above<br>
+          3. Runtime → Change runtime type → T4 GPU<br>
+          4. Run all. Wait ~2 hours.<br>
+          5. Download <code>dizercore-q4_k_m.gguf</code> from Drive.
+        </div>
+      </div>
+
+      <div class="training-state" id="training-state-upload">
+        <h4><span class="step-num">3</span> Upload Trained Model</h4>
+        <p>Upload the GGUF file that Colab produced. The Pi will validate it,
+           deploy it, and restart the model server.</p>
+        <label class="file-picker" for="training-file-input">
+          <div class="icon">📁</div>
+          <div class="text">
+            <div class="filename" id="training-file-name">Choose a .gguf file</div>
+            <div class="hint">Expected ~2 GB</div>
+          </div>
+          <input type="file" id="training-file-input" accept=".gguf" onchange="onTrainingFileSelected(this)">
+        </label>
+        <div class="training-progress" id="training-progress">
+          <div class="training-progress-bar" id="training-progress-bar"></div>
+        </div>
+        <div class="actions">
+          <button class="purple" id="training-upload-btn" onclick="uploadModel()" disabled>
+            Upload &amp; Deploy
+          </button>
+          <button onclick="downloadDataset()" style="margin-left:auto;">Download Dataset</button>
+        </div>
+      </div>
+
+      <div class="training-state" id="training-state-deployed">
+        <h4>✅ Custom Model Active</h4>
+        <p>The Pi is running your trained DizerCore model. If quality regresses,
+           click Revert to return to the base model.</p>
+        <div class="training-stats">
+          <div class="training-stat">
+            <div class="label">Active model</div>
+            <div class="value" id="tactive-model" style="font-size:0.75rem;">--</div>
+          </div>
+          <div class="training-stat">
+            <div class="label">Trained model size</div>
+            <div class="value" id="ttrained-size">--</div>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="danger" id="training-revert-btn" onclick="revertModel()">Revert to Base Model</button>
+          <button onclick="uploadAnotherModel()" style="margin-left:auto;">Upload Different Model</button>
+        </div>
+      </div>
+
+      <div class="training-log-wrap" id="training-log-wrap">
+        <div class="label">Build Log</div>
+        <pre class="training-log" id="training-log"></pre>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button onclick="refreshTraining()">Refresh</button>
+      <button onclick="closeTraining()">Close</button>
+    </div>
+  </div>
+</div>
+<script>
+// =============================================================================
+// Clipboard — works on HTTP LAN, HTTPS, and localhost
+// =============================================================================
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '0';
+  ta.style.left = '0';
+  ta.style.width = '2em';
+  ta.style.height = '2em';
+  ta.style.padding = '0';
+  ta.style.border = 'none';
+  ta.style.outline = 'none';
+  ta.style.boxShadow = 'none';
+  ta.style.background = 'transparent';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text)
+      .then(() => true)
+      .catch(() => fallbackCopy(text));
+  }
+  return Promise.resolve(fallbackCopy(text));
+}
+
+let pollTimer = null;
+
+// =============================================================================
+// Reasoning panel helpers
+// =============================================================================
+function setReasoning(text) {
+  const wrap = document.getElementById('output-reasoning-wrap');
+  const el = document.getElementById('output-reasoning');
+  if (!text) {
+    wrap.style.display = 'none';
+    wrap.open = false;
+    el.textContent = '';
+    return;
+  }
+  wrap.style.display = 'block';
+  el.textContent = text;
+}
+
+// =============================================================================
+// Prompt generation — SSE streaming with polling fallback
+// =============================================================================
+async function generate() {
+  const prompt = document.getElementById('prompt').value.trim();
+  if (!prompt) return;
+
+  const btn = document.getElementById('btn-generate');
+  btn.disabled = true;
+  btn.textContent = 'Refining...';
+
+  const outputSection = document.getElementById('output-section');
+  const outputEl = document.getElementById('output');
+
+  outputSection.style.display = 'block';
+  outputEl.textContent = 'Connecting...';
+  setReasoning('');
+  showMode(null, [], null);
+
+  try {
+    const res = await fetch('/api/generate/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ prompt })
+    });
+    if (!res.ok || !res.body) {
+      throw new Error('HTTP ' + res.status);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let metaReceived = false;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      // Split SSE events on blank-line delimiters
+      let sep;
+      while ((sep = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          let obj;
+          try { obj = JSON.parse(line.slice(6)); }
+          catch (e) { continue; }
+
+          if (obj.meta) {
+            metaReceived = true;
+            showMode(obj.meta.mode, obj.meta.sources, obj.meta.search_source);
+            outputEl.textContent = '';
+          }
+          if (obj.reasoning !== undefined) {
+            setReasoning(obj.reasoning);
+          }
+          if (obj.answer !== undefined) {
+            outputEl.textContent = obj.answer || '';
+          }
+          if (obj.done) {
+            if (obj.refined !== undefined) {
+              outputEl.textContent = obj.refined;
+            }
+            if (obj.reasoning) {
+              setReasoning(obj.reasoning);
+            }
+          }
+          if (obj.error) {
+            outputEl.textContent = 'Error: ' + obj.error;
+          }
+        }
+      }
+    }
+
+    if (!metaReceived) {
+      outputEl.textContent = '(empty stream — check llama-server)';
+    }
+  } catch (e) {
+    // Stream failed — fall back to the blocking endpoint + poll
+    outputEl.textContent = 'Stream failed: ' + (e.message || e) +
+      '\n\nFalling back to polling...';
+    try {
+      const res2 = await fetch('/api/generate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ prompt })
+      });
+      const entry = await res2.json();
+      showMode(entry.mode, entry.sources, entry.search_source);
+      pollEntry(entry.id);
+    } catch (e2) {
+      outputEl.textContent = 'Request failed entirely: ' + (e2.message || e2);
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Refine Prompt';
+    loadHistory();
+  }
+}
+
+function showMode(mode, sources, searchSource) {
+  const el = document.getElementById('output-mode');
+  if (!mode) {
+    el.style.display = 'none';
+  } else {
+    el.textContent = mode;
+    el.className = 'mode-badge ' + mode;
+    el.style.display = 'inline-block';
+  }
+
+  const tag = document.getElementById('output-source');
+  if (!searchSource) {
+    tag.style.display = 'none';
+  } else {
+    tag.textContent = searchSource;
+    tag.className = 'source-tag ' + searchSource;
+    tag.style.display = 'inline-block';
+  }
+
+  const srcRow = document.getElementById('output-sources');
+  if (!sources || !sources.length) {
+    srcRow.style.display = 'none';
+    srcRow.innerHTML = '';
+  } else {
+    srcRow.style.display = 'flex';
+    srcRow.innerHTML = '<span class="sources-label">searched:</span>' +
+      sources.map(s => `<span class="source-chip" title="${escapeHtml(s)}">${escapeHtml(s)}</span>`).join('');
+  }
+}
+
+// Polling fallback — only used when SSE fails
+function pollEntry(id) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const res = await fetch(`/api/history/${id}`);
+    const entry = await res.json();
+    if (['done','error','timeout'].includes(entry.status)) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      document.getElementById('output').textContent = entry.refined || '(no output)';
+      setReasoning(entry.reasoning || '');
+      showMode(entry.mode, entry.sources, entry.search_source);
+      loadHistory();
+    }
+  }, 2000);
+}
+
+async function loadHistory() {
+  const res = await fetch('/api/history');
+  const history = await res.json();
+  const list = document.getElementById('history-list');
+  if (!history.length) {
+    list.innerHTML = '<div class="empty">No prompts yet.</div>';
+    return;
+  }
+  list.innerHTML = history.slice().reverse().map(e => `
+    <div class="history-item" onclick="showEntry('${e.id}')">
+      <div class="time">${new Date(e.timestamp*1000).toLocaleString()}
+        ${e.mode ? `<span class="badge mode">${e.mode}</span>` : ''}
+        <span class="badge ${e.status}">${e.status}</span>
+      </div>
+      <div class="preview">${escapeHtml(e.original.slice(0,80))}</div>
+    </div>
+  `).join('');
+}
+
+async function showEntry(id) {
+  const res = await fetch(`/api/history/${id}`);
+  const entry = await res.json();
+  document.getElementById('output-section').style.display = 'block';
+  document.getElementById('output').textContent = entry.refined || '(no output yet)';
+  setReasoning(entry.reasoning || '');
+  showMode(entry.mode, entry.sources, entry.search_source);
+}
+
+async function clearHistory() {
+  await fetch('/api/history/clear', { method: 'POST' });
+  loadHistory();
+  document.getElementById('output-section').style.display = 'none';
+  toast('History cleared');
+}
+
+function clearInput() { document.getElementById('prompt').value = ''; }
+
+function copyOutput() {
+  const text = document.getElementById('output').textContent;
+  if (!text || text === 'Waiting for model...' || text === 'Connecting...') {
+    toast('Nothing to copy yet', true); return;
+  }
+  copyToClipboard(text).then(ok => {
+    if (ok) toast('Copied!');
+    else toast('Copy failed — select manually and Ctrl+C', true);
+  });
+}
+
+function copyLast() {
+  const el = document.getElementById('output');
+  const text = el ? el.textContent : '';
+  if (!text || text === 'Waiting for model...' || text === 'Connecting...') {
+    toast('Nothing to copy', true); return;
+  }
+  copyToClipboard(text).then(ok => {
+    if (ok) toast('Copied!');
+    else toast('Copy failed — select manually and Ctrl+C', true);
+  });
+}
+
+async function uploadLogo(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('logo', file);
+  await fetch('/api/upload-logo', { method: 'POST', body: form });
+  document.getElementById('logo').src = '/static/logo.png?' + Date.now();
+  document.getElementById('logo').style.display = '';
+  toast('Logo updated');
+}
+
+function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function toast(msg, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.toggle('error', !!isError);
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+// =============================================================================
+// Authenticated file download helper
+// window.location.href navigations cannot send X-DizerCore-Token, so GET
+// downloads go through fetch -> blob -> object URL instead.
+// =============================================================================
+async function downloadApiFile(url, filename) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(err.error || 'Download failed');
+    return;
+  }
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+// =============================================================================
+// Version check
+// =============================================================================
+let versionTimer = null;
+
+async function refreshVersion() {
+  const badge = document.getElementById('version-badge');
+  const text  = document.getElementById('version-text');
+  const btn   = document.getElementById('version-update-btn');
+  try {
+    const res = await fetch('/api/version');
+    const v = await res.json();
+    if (v.up_to_date === null) {
+      badge.className = 'version-badge error';
+      text.textContent = '⚠ offline';
+      btn.style.display = 'none';
+    } else if (v.up_to_date) {
+      badge.className = 'version-badge up-to-date';
+      text.textContent = `✓ ${v.local_short}`;
+      btn.style.display = 'none';
+    } else {
+      badge.className = 'version-badge out-of-date';
+      text.textContent = `✗ ${v.remote_short}`;
+      btn.style.display = 'inline-block';
+    }
+  } catch (e) {
+    badge.className = 'version-badge error';
+    text.textContent = '⚠ offline';
+    btn.style.display = 'none';
+  }
+}
+
+document.getElementById('version-badge').addEventListener('click', (e) => {
+  if (e.target.id === 'version-update-btn') return;
+  refreshVersion();
+});
+
+// =============================================================================
+// Update runner
+// =============================================================================
+let updatePollTimer = null;
+
+async function startUpdate(event) {
+  event.stopPropagation();
+  const overlay  = document.getElementById('update-overlay');
+  const logEl    = document.getElementById('update-log');
+  const status   = document.getElementById('update-status');
+  const closeBtn = document.getElementById('update-close-btn');
+  const footer   = document.getElementById('update-footer');
+  logEl.textContent = '';
+  status.textContent = 'starting...';
+  status.className = 'status running';
+  closeBtn.disabled = true;
+  footer.style.display = 'none';
+  overlay.classList.add('show');
+  const res = await fetch('/api/update', { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    status.textContent = err.error || 'failed to start';
+    status.className = 'status error';
+    closeBtn.disabled = false;
+    return;
+  }
+  pollUpdate();
+}
+
+function pollUpdate() {
+  if (updatePollTimer) clearInterval(updatePollTimer);
+  updatePollTimer = setInterval(async () => {
+    try {
+      const res = await fetch('/api/update/status');
+      const s = await res.json();
+      const logEl = document.getElementById('update-log');
+      logEl.textContent = s.log || '';
+      logEl.scrollTop = logEl.scrollHeight;
+      const status   = document.getElementById('update-status');
+      const closeBtn = document.getElementById('update-close-btn');
+      const footer   = document.getElementById('update-footer');
+      if (s.running) {
+        status.textContent = 'running...';
+        status.className = 'status running';
+      } else if (s.exit_code === 0) {
+        clearInterval(updatePollTimer);
+        status.textContent = 'complete';
+        status.className = 'status done';
+        closeBtn.disabled = false;
+        footer.style.display = 'flex';
+        refreshVersion();
+      } else {
+        clearInterval(updatePollTimer);
+        status.textContent = `failed (exit ${s.exit_code})`;
+        status.className = 'status error';
+        closeBtn.disabled = false;
+        footer.style.display = 'flex';
+      }
+    } catch (e) {}
+  }, 1500);
+}
+
+function closeUpdate() {
+  if (updatePollTimer) clearInterval(updatePollTimer);
+  document.getElementById('update-overlay').classList.remove('show');
+}
+
+// =============================================================================
+// System info modal
+// =============================================================================
+function fmt(v) {
+  if (v === null || v === undefined || v === '') {
+    return '<span class="missing">not detected</span>';
+  }
+  return escapeHtml(String(v));
+}
+
+async function loadSysInfo() {
+  const tbody = document.getElementById('sysinfo-table');
+  tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:#8b949e;">loading...</td></tr>';
+  try {
+    const res = await fetch('/api/system-info');
+    let d;
+    try { d = await res.json(); } catch (parseErr) {
+      tbody.innerHTML = `<tr><td colspan="2" style="text-align:center;color:#f85149;">Server returned non-JSON (HTTP ${res.status}).<br>Check <code>journalctl -u prompt-gateway</code>.</td></tr>`;
+      return;
+    }
+    if (!res.ok && d.error) {
+      tbody.innerHTML = `<tr><td colspan="2" style="text-align:center;color:#f85149;">
+        Server error: ${escapeHtml(d.error)}<br>
+        <span style="font-size:0.75rem;color:#8b949e;">${escapeHtml(d.type || '')}</span>
+      </td></tr>`;
+      return;
+    }
+    let rows = `
+      <tr class="section-row"><td colspan="2">DizerCore</td></tr>
+      <tr><td>Commit</td><td>${fmt(d.dizercore_commit)}</td></tr>
+      <tr><td>Date</td><td>${fmt(d.dizercore_date)}</td></tr>
+
+      <tr class="section-row"><td colspan="2">Services</td></tr>
+      <tr><td>Docker</td><td>${fmt(d.docker)}</td></tr>
+      <tr><td>Compose</td><td>${fmt(d.compose)}</td></tr>
+      <tr><td>Gitea image</td><td>${fmt(d.gitea_image)}</td></tr>
+      <tr><td>PostgreSQL image</td><td>${fmt(d.postgres_image)}</td></tr>
+
+      <tr class="section-row"><td colspan="2">Language Model</td></tr>
+      <tr><td>llama.cpp</td><td>${fmt(d.llama_cpp)}</td></tr>
+      <tr><td>llama-server</td><td>${fmt(d.llama_server)}</td></tr>
+      <tr><td>llama-server RSS</td><td>${fmt(d.llama_server_rss)}</td></tr>
+      <tr><td>Active model</td><td>${fmt(d.model)}</td></tr>
+      <tr><td>Model size</td><td>${fmt(d.model_size)}</td></tr>
+
+      <tr class="section-row"><td colspan="2">Reference &amp; Index</td></tr>
+      <tr><td>Reference repo</td><td>${fmt(d.reference_repo)}</td></tr>
+      <tr><td>Index files</td><td>${fmt(d.index_files)}</td></tr>
+      <tr><td>Index size</td><td>${fmt(d.index_size)}</td></tr>
+      <tr><td>Index watcher</td><td>${fmt(d.watcher)}</td></tr>
+      <tr><td>Last index build</td><td>${fmt(d.watcher_last_build)}</td></tr>
+      <tr><td>AI busy</td><td>${fmt(d.ai_busy)}</td></tr>
+
+      <tr class="section-row"><td colspan="2">Training</td></tr>
+      <tr><td>Dataset examples</td><td>${fmt(d.training_dataset_examples)}</td></tr>
+      <tr><td>Dataset size</td><td>${fmt(d.training_dataset)}</td></tr>
+      <tr><td>Trained model</td><td>${fmt(d.trained_model)}</td></tr>
+
+      <tr class="section-row"><td colspan="2">Usage</td></tr>
+      <tr><td>History entries</td><td>${fmt(d.history_count)}</td></tr>
+    `;
+    if (d._errors && d._errors.length) {
+      rows += `<tr class="error-row"><td colspan="2">
+        ⚠ ${d._errors.length} field${d._errors.length === 1 ? '' : 's'} failed:
+        ${d._errors.map(e => escapeHtml(e)).join(', ')}
+      </td></tr>`;
+    }
+    tbody.innerHTML = rows;
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="2" style="text-align:center;color:#f85149;">
+      Network error: ${escapeHtml(e.message || String(e))}<br>
+      Is the Web UI service running?
+    </td></tr>`;
+  }
+}
+
+function showSysInfo() {
+  document.getElementById('sysinfo-overlay').classList.add('show');
+  loadSysInfo();
+}
+function closeSysInfo() {
+  document.getElementById('sysinfo-overlay').classList.remove('show');
+}
+function refreshSysInfo() { loadSysInfo(); }
+
+document.getElementById('sysinfo-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'sysinfo-overlay') closeSysInfo();
+});
+
+// =============================================================================
+// Installer log modal
+// =============================================================================
+let logData = { lines: [], counts: { install:0, skip:0, warn:0, error:0, step:0 } };
+let logFilter = 'all';
+let logPollTimer = null;
+
+function classifyLine(line) {
+  if (line.includes('[INSTALL]')) return 'install';
+  if (line.includes('[SKIP'))    return 'skip';
+  if (line.includes('[WARN'))    return 'warn';
+  if (line.includes('[ERROR'))   return 'error';
+  if (line.includes('[STEP'))    return 'step';
+  return 'other';
+}
+
+function renderLog() {
+  const body = document.getElementById('log-body');
+  const lines = logData.lines || [];
+  const filtered = logFilter === 'all'
+    ? lines
+    : lines.filter(l => classifyLine(l) === logFilter);
+  if (!filtered.length) {
+    body.innerHTML = '<div class="log-empty">No lines match this filter.</div>';
+    return;
+  }
+  const html = filtered.map(line => {
+    const cls = classifyLine(line);
+    return `<div class="log-line tag-${cls}">${escapeHtml(line)}</div>`;
+  }).join('');
+  body.innerHTML = `<div class="log-lines">${html}</div>`;
+  body.scrollTop = body.scrollHeight;
+}
+
+function updateLogCounts(c) {
+  document.getElementById('cnt-install').textContent = c.install || 0;
+  document.getElementById('cnt-skip').textContent    = c.skip || 0;
+  document.getElementById('cnt-warn').textContent    = c.warn || 0;
+  document.getElementById('cnt-error').textContent   = c.error || 0;
+  document.getElementById('cnt-all').textContent     =
+    (c.install || 0) + (c.skip || 0) + (c.warn || 0) + (c.error || 0) + (c.step || 0);
+  const dot = document.getElementById('log-dot');
+  if ((c.error || 0) > 0) dot.className = 'dot err';
+  else if ((c.warn || 0) > 0) dot.className = 'dot warn';
+  else dot.className = '';
+}
+
+async function loadLog() {
+  const lines = document.getElementById('log-lines').value || '500';
+  const status = document.getElementById('log-status');
+  status.textContent = 'loading...';
+  status.className = 'status running';
+  try {
+    const res = await fetch(`/api/log?lines=${lines}`);
+    const d = await res.json();
+    if (d.error) { status.textContent = d.error; status.className = 'status error'; return; }
+    if (!d.exists) {
+      document.getElementById('log-body').innerHTML =
+        '<div class="log-empty">Log file not found yet.<br>Run the installer to create it.</div>';
+      status.textContent = 'not found';
+      status.className = 'status error';
+      return;
+    }
+    logData = d;
+    updateLogCounts(d.counts);
+    renderLog();
+    status.textContent = `${d.shown_lines} of ${d.total_lines} lines · ${(d.size/1024).toFixed(1)} KB`;
+    status.className = 'status';
+  } catch (e) {
+    status.textContent = 'failed to load';
+    status.className = 'status error';
+  }
+}
+
+function setLogFilter(f) {
+  logFilter = f;
+  document.querySelectorAll('.log-filter-btn[data-filter]').forEach(b => {
+    b.classList.toggle('active', b.dataset.filter === f);
+  });
+  renderLog();
+}
+
+function showLog() {
+  document.getElementById('log-overlay').classList.add('show');
+  loadLog();
+  if (logPollTimer) clearInterval(logPollTimer);
+  logPollTimer = setInterval(loadLog, 5000);
+}
+
+function closeLog() {
+  document.getElementById('log-overlay').classList.remove('show');
+  if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }
+}
+
+function downloadLog() { downloadApiFile('/api/log/download', 'dizercore-install.log'); }
+
+async function clearLog() {
+  if (!confirm('Clear the installer log? This cannot be undone.')) return;
+  const res = await fetch('/api/log/clear', { method: 'POST' });
+  const d = await res.json();
+  if (!res.ok) { alert(d.error || 'Failed to clear log'); return; }
+  toast('Log cleared');
+  loadLog();
+}
+
+document.getElementById('log-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'log-overlay') closeLog();
+});
+
+// =============================================================================
+// Index modal
+// =============================================================================
+let indexPollTimer = null;
+
+function formatBytes(bytes) {
+  if (!bytes) return '--';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+function formatRelativeTime(mtime) {
+  if (!mtime) return '--';
+  const diff = Date.now() / 1000 - mtime;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + ' min ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + ' hours ago';
+  return Math.floor(diff / 86400) + ' days ago';
+}
+
+async function loadIndexStatus() {
+  const status = document.getElementById('index-status-text');
+  const log = document.getElementById('index-log');
+  const countEl = document.getElementById('index-count');
+  const sizeEl = document.getElementById('index-size');
+  const mtimeEl = document.getElementById('index-mtime');
+  const watcherEl = document.getElementById('index-watcher');
+
+  try {
+    const res = await fetch('/api/index/status');
+    const d = await res.json();
+
+    countEl.textContent = d.count != null ? d.count.toLocaleString() : '--';
+    sizeEl.textContent = formatBytes(d.size);
+    mtimeEl.textContent = d.mtime ? formatRelativeTime(d.mtime) : '--';
+    watcherEl.textContent = d.watcher_up ? 'up' : 'down';
+    watcherEl.style.color = d.watcher_up ? 'var(--green)' : 'var(--red)';
+
+    if (d.running) {
+      status.textContent = 'rebuilding...';
+      status.className = 'status running';
+      document.getElementById('index-dot').className = '';
+    } else if (!d.exists) {
+      status.textContent = 'no index';
+      status.className = 'status error';
+      document.getElementById('index-dot').className = 'dot warn';
+    } else if (d.watcher_last_build_status && d.watcher_last_build_status.startsWith('error')) {
+      status.textContent = d.watcher_last_build_status;
+      status.className = 'status error';
+      document.getElementById('index-dot').className = 'dot err';
+    } else {
+      status.textContent = `ready · ${d.count} files · ${formatBytes(d.size)}`;
+      status.className = 'status done';
+      document.getElementById('index-dot').className = 'dot ok';
+    }
+
+    log.textContent = d.log || '(no recent activity)';
+    log.scrollTop = log.scrollHeight;
+  } catch (e) {
+    status.textContent = 'error';
+    status.className = 'status error';
+  }
+}
+
+async function rebuildIndex() {
+  const allSql = document.getElementById('index-all-sql').checked;
+  const btn = document.getElementById('index-rebuild-btn');
+  btn.disabled = true;
+  const res = await fetch(`/api/index/rebuild?all_sql=${allSql ? '1' : '0'}`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(err.error || 'Failed to start index rebuild');
+    btn.disabled = false;
+    return;
+  }
+  if (indexPollTimer) clearInterval(indexPollTimer);
+  indexPollTimer = setInterval(async () => {
+    await loadIndexStatus();
+    const res = await fetch('/api/index/status');
+    const d = await res.json();
+    if (!d.running) {
+      clearInterval(indexPollTimer);
+      indexPollTimer = null;
+      btn.disabled = false;
+    }
+  }, 2000);
+  await loadIndexStatus();
+}
+
+function showIndex() {
+  document.getElementById('index-overlay').classList.add('show');
+  loadIndexStatus();
+  if (indexPollTimer) clearInterval(indexPollTimer);
+  indexPollTimer = setInterval(loadIndexStatus, 3000);
+}
+
+function closeIndex() {
+  document.getElementById('index-overlay').classList.remove('show');
+  if (indexPollTimer) { clearInterval(indexPollTimer); indexPollTimer = null; }
+}
+
+document.getElementById('index-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'index-overlay') closeIndex();
+});
+
+// =============================================================================
+// Training modal
+// =============================================================================
+let trainingPollTimer = null;
+let trainingBuildPollTimer = null;
+
+function showTrainingState(state) {
+  document.querySelectorAll('.training-state').forEach(el => el.classList.remove('active'));
+  const el = document.getElementById('training-state-' + state);
+  if (el) el.classList.add('active');
+}
+
+function setTrainingDot(kind) {
+  const dot = document.getElementById('training-dot');
+  dot.className = 'dot' + (kind ? ' ' + kind : '');
+}
+
+async function loadTrainingStatus() {
+  const status = document.getElementById('training-status-text');
+  try {
+    const res = await fetch('/api/training/status');
+    const d = await res.json();
+
+    const ds = d.dataset || {};
+    const tm = d.trained_model || {};
+    const active = d.active_kind;
+
+    document.getElementById('tdataset-count').textContent =
+      ds.count ? ds.count.toLocaleString() : '--';
+    document.getElementById('tdataset-size').textContent = formatBytes(ds.size);
+    document.getElementById('tdataset-mtime').textContent =
+      ds.mtime ? formatRelativeTime(ds.mtime) : '--';
+
+    document.getElementById('tactive-model').textContent =
+      d.active_model ? d.active_model.split('/').pop() : '--';
+    document.getElementById('ttrained-size').textContent =
+      tm.exists ? formatBytes(tm.size) : '--';
+
+    if (active === 'trained') {
+      status.textContent = 'trained model active';
+      status.className = 'status done';
+      showTrainingState('deployed');
+      setTrainingDot('active');
+    } else if (ds.exists) {
+      status.textContent = `${ds.count} examples ready`;
+      status.className = 'status done';
+      showTrainingState('upload');
+      setTrainingDot('warn');
+    } else {
+      status.textContent = 'no dataset';
+      status.className = 'status error';
+      showTrainingState('nodataset');
+      setTrainingDot('warn');
+    }
+  } catch (e) {
+    status.textContent = 'error';
+    status.className = 'status error';
+  }
+}
+
+async function loadTrainingBuildStatus() {
+  try {
+    const res = await fetch('/api/training/build-dataset/status');
+    const d = await res.json();
+    const wrap = document.getElementById('training-log-wrap');
+    const log = document.getElementById('training-log');
+    const btn = document.getElementById('training-build-btn');
+
+    if (d.building) {
+      wrap.classList.add('show');
+      log.textContent = d.log || 'starting...';
+      log.scrollTop = log.scrollHeight;
+      if (btn) { btn.disabled = true; btn.textContent = 'Building...'; }
+    } else {
+      if (btn) { btn.disabled = false; btn.textContent = 'Build Dataset'; }
+      if (d.exit_code !== null && d.exit_code !== undefined) {
+        wrap.classList.add('show');
+        log.textContent = d.log || '';
+        if (trainingBuildPollTimer) {
+          clearInterval(trainingBuildPollTimer);
+          trainingBuildPollTimer = null;
+        }
+        await loadTrainingStatus();
+      }
+    }
+  } catch (e) {}
+}
+
+async function buildDataset() {
+  const btn = document.getElementById('training-build-btn');
+  btn.disabled = true;
+  btn.textContent = 'Building...';
+  const res = await fetch('/api/training/build-dataset', { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(err.error || 'Failed to start dataset build');
+    btn.disabled = false;
+    btn.textContent = 'Build Dataset';
+    return;
+  }
+  document.getElementById('training-log-wrap').classList.add('show');
+  document.getElementById('training-log').textContent = 'starting...';
+
+  if (trainingBuildPollTimer) clearInterval(trainingBuildPollTimer);
+  trainingBuildPollTimer = setInterval(loadTrainingBuildStatus, 1500);
+  await loadTrainingBuildStatus();
+}
+
+function downloadDataset() {
+  downloadApiFile('/api/training/dataset/download', 'dizercore-dataset.jsonl');
+}
+
+function onTrainingFileSelected(input) {
+  const file = input.files[0];
+  const nameEl = document.getElementById('training-file-name');
+  const btn = document.getElementById('training-upload-btn');
+  if (!file) {
+    nameEl.textContent = 'Choose a .gguf file';
+    btn.disabled = true;
+    return;
+  }
+  const sizeMB = (file.size / (1024 * 1024)).toFixed(0);
+  nameEl.textContent = `${file.name} (${sizeMB} MB)`;
+  btn.disabled = false;
+}
+
+async function uploadModel() {
+  const input = document.getElementById('training-file-input');
+  const file = input.files[0];
+  if (!file) return;
+
+  const btn = document.getElementById('training-upload-btn');
+  const progress = document.getElementById('training-progress');
+  const bar = document.getElementById('training-progress-bar');
+  const status = document.getElementById('training-status-text');
+
+  btn.disabled = true;
+  btn.textContent = 'Uploading...';
+  progress.classList.add('show');
+  bar.style.width = '0%';
+  status.textContent = 'uploading...';
+  status.className = 'status running';
+
+  const form = new FormData();
+  form.append('model', file);
+
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable) {
+        const pct = (e.loaded / e.total) * 100;
+        bar.style.width = pct + '%';
+        status.textContent = `uploading ${pct.toFixed(0)}%`;
+      }
+    });
+    xhr.addEventListener('load', async () => {
+      progress.classList.remove('show');
+      btn.textContent = 'Upload & Deploy';
+      if (xhr.status >= 200 && xhr.status < 300) {
+        toast('Model deployed');
+        input.value = '';
+        document.getElementById('training-file-name').textContent = 'Choose a .gguf file';
+        await loadTrainingStatus();
+      } else {
+        let err = 'Upload failed';
+        try { err = JSON.parse(xhr.responseText).error || err; } catch (e) {}
+        alert(err);
+        btn.disabled = false;
+        status.textContent = 'upload failed';
+        status.className = 'status error';
+      }
+      resolve();
+    });
+    xhr.addEventListener('error', () => {
+      progress.classList.remove('show');
+      btn.disabled = false;
+      btn.textContent = 'Upload & Deploy';
+      status.textContent = 'network error';
+      status.className = 'status error';
+      resolve();
+    });
+    xhr.open('POST', '/api/training/upload-model');
+    // XHR bypasses the fetch wrapper — send the token explicitly
+    if (window.__dizerToken) {
+      xhr.setRequestHeader('X-DizerCore-Token', window.__dizerToken);
+    }
+    xhr.send(form);
+  });
+}
+
+function uploadAnotherModel() {
+  showTrainingState('upload');
+  document.getElementById('training-file-input').value = '';
+  document.getElementById('training-file-name').textContent = 'Choose a .gguf file';
+  document.getElementById('training-upload-btn').disabled = true;
+}
+
+async function revertModel() {
+  if (!confirm('Revert to the base model? Your trained model stays on disk.')) return;
+  const btn = document.getElementById('training-revert-btn');
+  btn.disabled = true;
+  btn.textContent = 'Reverting...';
+  const res = await fetch('/api/training/revert', { method: 'POST' });
+  btn.disabled = false;
+  btn.textContent = 'Revert to Base Model';
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(err.error || 'Revert failed');
+    return;
+  }
+  toast('Reverted to base model');
+  await loadTrainingStatus();
+}
+
+function showTraining() {
+  document.getElementById('training-overlay').classList.add('show');
+  loadTrainingStatus();
+  loadTrainingBuildStatus();
+  if (trainingPollTimer) clearInterval(trainingPollTimer);
+  trainingPollTimer = setInterval(loadTrainingStatus, 5000);
+}
+
+function closeTraining() {
+  document.getElementById('training-overlay').classList.remove('show');
+  if (trainingPollTimer) { clearInterval(trainingPollTimer); trainingPollTimer = null; }
+  if (trainingBuildPollTimer) { clearInterval(trainingBuildPollTimer); trainingBuildPollTimer = null; }
+}
+
+function refreshTraining() {
+  loadTrainingStatus();
+  loadTrainingBuildStatus();
+}
+
+document.getElementById('training-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'training-overlay') closeTraining();
+});
+
+// =============================================================================
+// Live system stats
+// =============================================================================
+let statsTimer = null;
+
+function setBar(id, pct, warnAt, critAt) {
+  const el = document.getElementById('bar-' + id);
+  const stat = document.getElementById('stat-' + id);
+  if (!el) return;
+  const clamped = Math.max(0, Math.min(100, pct));
+  el.style.width = clamped + '%';
+  el.classList.remove('warn', 'crit');
+  stat.classList.remove('warn', 'crit');
+  if (critAt !== undefined && pct >= critAt) {
+    el.classList.add('crit'); stat.classList.add('crit');
+  } else if (warnAt !== undefined && pct >= warnAt) {
+    el.classList.add('warn'); stat.classList.add('warn');
+  }
+}
+
+async function refreshStats() {
+  try {
+    const res = await fetch('/api/system-stats');
+    const d = await res.json();
+
+    setBar('cpu', d.cpu.percent, 60, 85);
+    document.getElementById('val-cpu').textContent = `${d.cpu.percent.toFixed(0)}%`;
+    document.getElementById('stat-cpu').title =
+      `CPU: ${d.cpu.percent.toFixed(1)}% over ${d.cpu.cores} cores\n` +
+      (d.cpu.freq_mhz ? `Clock: ${d.cpu.freq_mhz} MHz\n` : '') +
+      `Load: ${d.cpu.load[0]} / ${d.cpu.load[1]} / ${d.cpu.load[2]}\n` +
+      `Per-core: ${d.cpu.per_core.join('%, ')}%`;
+
+    setBar('ram', d.memory.percent, 75, 90);
+    const usedG = (d.memory.used_mb / 1024).toFixed(1);
+    const totalG = (d.memory.total_mb / 1024).toFixed(0);
+    document.getElementById('val-ram').textContent = `${usedG} / ${totalG} G`;
+    document.getElementById('stat-ram').title =
+      `Memory: ${d.memory.used_mb} MB used of ${d.memory.total_mb} MB (${d.memory.percent}%)\n` +
+      `Swap:  ${d.swap.used_mb} MB of ${d.swap.total_mb} MB (${d.swap.percent}%)`;
+
+    setBar('disk', d.disk.percent, 75, 90);
+    document.getElementById('val-disk').textContent =
+      `${d.disk.used_gb.toFixed(0)} / ${d.disk.total_gb.toFixed(0)} G`;
+    document.getElementById('stat-disk').title =
+      `NVMe ${d.disk.mount}: ${d.disk.used_gb} GB used of ${d.disk.total_gb} GB (${d.disk.percent}%)`;
+
+    if (d.temp_c !== null && d.temp_c !== undefined) {
+      setBar('temp', d.temp_c, 65, 80);
+      document.getElementById('val-temp').textContent = `${d.temp_c.toFixed(1)}°C`;
+      let tempNote = 'normal';
+      if (d.temp_c >= 80) tempNote = 'throttling range';
+      else if (d.temp_c >= 65) tempNote = 'warm';
+      document.getElementById('stat-temp').title = `CPU temperature: ${d.temp_c}°C (${tempNote})`;
+    } else {
+      document.getElementById('val-temp').textContent = 'n/a';
+      document.getElementById('stat-temp').title = 'Temperature sensor unavailable';
+    }
+
+    const gpuEl = document.getElementById('val-gpu');
+    const gpuStat = document.getElementById('stat-gpu');
+    gpuStat.classList.remove('throttled');
+    if (d.gpu_mhz) gpuEl.textContent = `${d.gpu_mhz} MHz`;
+    else gpuEl.textContent = 'n/a';
+    let gpuTitle = `GPU V3D clock: ${d.gpu_mhz || 'n/a'} MHz`;
+    if (d.throttle) {
+      if (d.throttle.current) {
+        gpuStat.classList.add('throttled');
+        gpuEl.textContent += ' ⚠';
+        gpuTitle += `\n⚠ Currently throttled (${d.throttle.raw})`;
+      } else if (d.throttle.occurred) {
+        gpuStat.classList.add('throttled');
+        gpuEl.textContent += ' ⚠';
+        gpuTitle += `\n⚠ Throttling has occurred (${d.throttle.raw})`;
+      } else {
+        gpuTitle += `\nNo throttling (${d.throttle.raw})`;
+      }
+    }
+    gpuStat.title = gpuTitle;
+  } catch (e) {}
+}
+
+function startStats() {
+  refreshStats();
+  if (statsTimer) clearInterval(statsTimer);
+  statsTimer = setInterval(refreshStats, 3000);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+  } else {
+    startStats();
+  }
+});
+
+// =============================================================================
+// Init
+// =============================================================================
+refreshVersion();
+versionTimer = setInterval(refreshVersion, 60000);
+
+loadHistory();
+startStats();
+
+fetch('/api/log?lines=1').then(r => r.json()).then(d => {
+  if (d.counts) updateLogCounts(d.counts);
+}).catch(() => {});
+
+fetch('/api/index/status').then(r => r.json()).then(d => {
+  const dot = document.getElementById('index-dot');
+  if (!d.exists) dot.className = 'dot warn';
+  else if (d.running) dot.className = '';
+  else if (d.watcher_last_build_status && d.watcher_last_build_status.startsWith('error')) dot.className = 'dot err';
+  else dot.className = 'dot ok';
+}).catch(() => {});
+
+fetch('/api/training/status').then(r => r.json()).then(d => {
+  if (d.active_kind === 'trained') setTrainingDot('active');
+  else setTrainingDot('warn');
+}).catch(() => {});
+</script>
+</body>
 </html>
