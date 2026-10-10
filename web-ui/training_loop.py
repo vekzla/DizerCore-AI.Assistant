@@ -44,9 +44,28 @@ DEFAULT_INDEX_DB      = "/data/web-ui/dizercore-index.db"
 
 # Patterns for the four kinds of artifact we check. Deliberately conservative
 # so we never flag free-form prose.
-_PATH_RE = re.compile(
-    r"\b([A-Za-z0-9_\-]+(?:/[A-Za-z0-9_\-]+)+\.(?:sql|cpp|h|hpp|py|lua))\b"
+#
+# Full paths: at least one directory separator. Dots are allowed inside
+# segments so 'sql/old/12.x/world/foo.sql' matches as a whole (the earlier
+# version's char class excluded '.', which truncated 'sql/old/12.x/...' down
+# to 'x/...' and produced false positives).
+_PATH_RE_FULL = re.compile(
+    r"\b("
+    r"[A-Za-z0-9_\-][A-Za-z0-9_.\-]*"
+    r"(?:/[A-Za-z0-9_\-][A-Za-z0-9_.\-]*)+"
+    r"\.(?:sql|cpp|cc|cxx|h|hpp|hh|py|lua)"
+    r")\b"
 )
+
+# Bare filenames — no directory prefix. Only C/C++ header/source extensions,
+# because a bare .sql reference is common and legitimate; a bare .cpp
+# reference almost always means the model invented the path.
+_PATH_RE_BARE = re.compile(
+    r"(?<![A-Za-z0-9_./\-])"
+    r"([A-Za-z_][A-Za-z0-9_\-]{2,}\.(?:cpp|cc|cxx|hpp|hh))"
+    r"(?![A-Za-z0-9_.])"
+)
+
 _SYMBOL_RE = re.compile(
     r"\b([A-Z][A-Za-z0-9_]+::[A-Za-z_][A-Za-z0-9_]*)\b"
 )
@@ -116,6 +135,21 @@ def _path_contains(conn, path):
         return None
 
 
+def _basename_exists(conn, name):
+    """True if any indexed path ends with `/name` or equals `name`.
+    Used for bare-filename checks: 'SpellScripts.cpp' is real if the
+    repo has it anywhere, even though the model didn't give a directory.
+    """
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM files WHERE path = ? OR path LIKE ? LIMIT 1",
+            (name, f"%/{name}"),
+        ).fetchone()
+        return row is not None
+    except sqlite3.Error:
+        return None
+
+
 def _dedupe_preserve_order(seq):
     seen = set()
     out = []
@@ -156,8 +190,8 @@ def verify_output(output, index_db=DEFAULT_INDEX_DB):
     checked = 0
 
     try:
-        # 1. File paths — most reliable signal, check first
-        paths = _dedupe_preserve_order(_PATH_RE.findall(output))[:_MAX_CANDIDATES]
+        # 1a. Full paths with directory separators
+        paths = _dedupe_preserve_order(_PATH_RE_FULL.findall(output))[:_MAX_CANDIDATES]
         for p in paths:
             checked += 1
             if _path_contains(conn, p) is False:
@@ -165,6 +199,17 @@ def verify_output(output, index_db=DEFAULT_INDEX_DB):
                     "kind": "path",
                     "name": p,
                     "detail": f"file path not in reference index: {p}",
+                })
+
+        # 1b. Bare filenames — check any indexed path ends with this name
+        bare = _dedupe_preserve_order(_PATH_RE_BARE.findall(output))[:_MAX_CANDIDATES]
+        for name in bare:
+            checked += 1
+            if _basename_exists(conn, name) is False:
+                issues.append({
+                    "kind": "path",
+                    "name": name,
+                    "detail": f"filename not found anywhere in reference index: {name}",
                 })
 
         # 2. Class::method symbols
