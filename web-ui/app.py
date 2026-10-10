@@ -802,8 +802,8 @@ _PLACEHOLDER_LINE = re.compile(
 )
 
 _PLACEHOLDER_ANGLED = re.compile(
-    r"^[ \t]*<[^>\n]{30,}>[ \t]*$",
-    re.MULTILINE,
+    r"<[^<>\n]{50,}>",
+    re.DOTALL,
 )
 
 _INVENTED_TABLE = re.compile(
