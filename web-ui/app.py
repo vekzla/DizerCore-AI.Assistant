@@ -292,7 +292,8 @@ RULES — violating any of these makes the output unusable:
 4. Do NOT write the actual fix, corrective SQL, or replacement C++ code. You describe WHAT to check and WHAT to verify.
 5. If a needed column name is not visible in the matched excerpts, write "<column not shown — verify against schema>" and stop.
 6. End the PROMPT FOR NEXT AI section with exactly one line beginning "Success: " that states the POSITIVE observable result when the issue is FIXED. Never phrase Success as the current broken state. Example: "Success: the quest credit fires when the player kills Lyssabel Dawnpetal." NOT "Success: the row is missing."
-7. The STRUCTURE EXAMPLE above uses fictional values (ExampleRepo, ExampleFile.sql, ExampleTable, ExampleColumn, 00000, ExampleClass::ExampleMethod). NEVER copy them into your output. Every concrete value — path, table, column, ID — must come from the matched excerpts or the user's prompt. If the user's prompt does not supply an ID, do NOT invent one; write "<id not shown — ask user>" and stop."""
+7. The STRUCTURE EXAMPLE above uses fictional values (ExampleRepo, ExampleFile.sql, ExampleTable, ExampleColumn, 00000, ExampleClass::ExampleMethod). NEVER copy them into your output. Every concrete value — path, table, column, ID — must come from the matched excerpts or the user's prompt. If the user's prompt does not supply an ID, do NOT invent one; write "<id not shown — ask user>" and stop.
+8. If the user's prompt states the trigger or mechanic (e.g. "triggers on gossip menu opening", "fires when the player accepts the quest"), the Success: line MUST describe that same mechanic. Never substitute a different trigger you invented. If you do not know the trigger, write "Success: the correct trigger fires the quest credit" without naming one."""
 
 DOMAIN_RULES = {
     "cpp": (
