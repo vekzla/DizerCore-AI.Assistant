@@ -20,7 +20,7 @@ import sqlite3
 import traceback
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
-from flask import (Flask, render_template, request, jsonify,
+from flask import (Flask, render_template, request, jsonify, Response,
                    send_from_directory, send_file)
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 # flask_cors intentionally not imported — the UI is same-origin only.
@@ -685,24 +685,54 @@ def _build_system_prompt(mode, query=""):
 
 
 # =============================================================================
-# Thinking-block stripper
+# Thinking-block splitter
+#
+# _split_thinking() replaces the old _strip_thinking(). Reasoning content is
+# now preserved in a separate field so the UI can display it in a collapsible
+# panel. Empty reasoning is the common case — Qwen2.5-3B-Instruct does not
+# emit thinking blocks, but reasoning-capable models swapped in later will.
 # =============================================================================
 
-_THINK_PATTERNS = [
-    re.compile(r"\[\s*Start thinking\s*\].*?\[\s*End thinking\s*\]", re.DOTALL | re.IGNORECASE),
-    re.compile(r"<\s*think\s*>.*?<\s*/\s*think\s*>", re.DOTALL | re.IGNORECASE),
-    re.compile(r"\[\s*Start thinking\s*\].*", re.DOTALL | re.IGNORECASE),
-    re.compile(r"\[\s*Prompt:.*?Generation:.*?\]", re.DOTALL),
-]
-
-
-def _strip_thinking(text):
+def _split_thinking(text):
+    """Return (reasoning, answer). Reasoning is anything inside a thinking
+    block (paired or truncated); answer is everything outside it."""
     if not text:
-        return text
-    out = text
-    for pat in _THINK_PATTERNS:
-        out = pat.sub("", out)
-    return out.strip()
+        return "", ""
+
+    reasoning_chunks = []
+    answer = text
+
+    # Paired markers — extract and remove
+    for pat in (
+        re.compile(r"\[\s*Start thinking\s*\](.*?)\[\s*End thinking\s*\]",
+                   re.DOTALL | re.IGNORECASE),
+        re.compile(r"<\s*think\s*>(.*?)<\s*/\s*think\s*>",
+                   re.DOTALL | re.IGNORECASE),
+    ):
+        for m in pat.finditer(answer):
+            reasoning_chunks.append(m.group(1).strip())
+        answer = pat.sub("", answer)
+
+    # Truncated markers — extract to end of text
+    for pat in (
+        re.compile(r"\[\s*Start thinking\s*\](.*)", re.DOTALL | re.IGNORECASE),
+        re.compile(r"<\s*think\s*>(.*)", re.DOTALL | re.IGNORECASE),
+    ):
+        m = pat.search(answer)
+        if m:
+            reasoning_chunks.append(m.group(1).strip())
+            answer = answer[:m.start()]
+
+    # Clean up leftover "Prompt:...Generation:..." blocks that some GGUF
+    # builds emit as metadata
+    answer = re.sub(r"\[\s*Prompt:.*?Generation:.*?\]", "", answer,
+                    flags=re.DOTALL)
+    answer = re.sub(r"\[\s*Start thinking\s*\]", "", answer,
+                    flags=re.IGNORECASE)
+    answer = re.sub(r"\[\s*End thinking\s*\]", "", answer,
+                    flags=re.IGNORECASE)
+
+    return "\n".join(reasoning_chunks).strip(), answer.strip()
 
 
 # =============================================================================
@@ -794,6 +824,44 @@ def _generate_via_server(prompt, system_prompt, max_tokens=GENERATE_MAX_TOKENS):
         return None
 
 
+def _stream_via_server(prompt, system_prompt, max_tokens=GENERATE_MAX_TOKENS):
+    """Generator yielding text chunks from llama-server's SSE stream.
+    Zero extra Pi cost — same tokens generated, forwarded as they arrive."""
+    body = json.dumps({
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.3,
+        "stream": True,
+    }).encode()
+    req = Request(
+        f"{LLAMA_SERVER_URL}/v1/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=300) as r:
+            for raw_line in r:
+                line = raw_line.decode("utf-8", "replace").strip()
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:]
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                    content = chunk["choices"][0].get("delta", {}).get("content")
+                    if content:
+                        yield content
+                except (KeyError, IndexError, json.JSONDecodeError):
+                    continue
+    except (URLError, HTTPError, TimeoutError):
+        return
+
+
 def _generate_via_cli(prompt, system_prompt, max_tokens=GENERATE_MAX_TOKENS):
     result = subprocess.run(
         [
@@ -829,7 +897,7 @@ def static_files(filename):
 
 
 # =============================================================================
-# Generate
+# Generate — blocking endpoint (kept for fallback and history)
 # =============================================================================
 
 @app.route("/api/generate", methods=["POST"])
@@ -853,6 +921,7 @@ def generate():
         "timestamp": time.time(),
         "original": prompt,
         "refined": "",
+        "reasoning": "",
         "status": "running",
         "mode": mode,
         "backend": None,
@@ -877,8 +946,9 @@ def generate():
                 output = _generate_via_cli(prompt, system_prompt)
                 fields["backend"] = "llama-cli"
 
-            output = _strip_thinking(output or "")
-            fields["refined"] = output if output else "(empty response — try again)"
+            reasoning, answer = _split_thinking(output or "")
+            fields["reasoning"] = reasoning
+            fields["refined"] = answer if answer else "(empty response — try again)"
             fields["status"] = "done"
         except subprocess.TimeoutExpired:
             fields["status"] = "timeout"
@@ -892,6 +962,99 @@ def generate():
 
     threading.Thread(target=run, daemon=True).start()
     return jsonify(entry)
+
+
+# =============================================================================
+# Generate — streaming endpoint (SSE)
+# =============================================================================
+
+@app.route("/api/generate/stream", methods=["POST"])
+def generate_stream():
+    data = request.json
+    prompt = data.get("prompt", "").strip()
+    if not prompt:
+        return jsonify({"error": "No prompt provided"}), 400
+
+    mode = _detect_mode(prompt)
+    system_prompt, repo_matches = _build_system_prompt(mode, query=prompt)
+
+    matched_files = []
+    if repo_matches and repo_matches.get("matches"):
+        matched_files = [m["path"] for m in repo_matches["matches"]]
+    search_source = (repo_matches or {}).get("source")
+
+    entry = {
+        "id": str(uuid.uuid4()),
+        "timestamp": time.time(),
+        "original": prompt,
+        "refined": "",
+        "reasoning": "",
+        "status": "running",
+        "mode": mode,
+        "backend": None,
+        "sources": matched_files,
+        "search_source": search_source,
+    }
+    append_history(entry)
+    entry_id = entry["id"]
+
+    def event_stream():
+        yield f"data: {json.dumps({'meta': entry})}\n\n"
+        _mark_ai_busy()
+        try:
+            accumulated = ""
+            backend = None
+            last_reasoning = ""
+            last_answer = ""
+
+            for delta in _stream_via_server(prompt, system_prompt):
+                if backend is None:
+                    backend = "llama-server"
+                accumulated += delta
+                reasoning, answer = _split_thinking(accumulated)
+
+                # Only emit snapshots when something changed
+                if reasoning != last_reasoning or answer != last_answer:
+                    last_reasoning = reasoning
+                    last_answer = answer
+                    yield ("data: " + json.dumps({
+                        "reasoning": reasoning,
+                        "answer": answer,
+                    }) + "\n\n")
+
+            if backend is None:
+                # llama-server unreachable — fall back to subprocess (blocking)
+                output = _generate_via_cli(prompt, system_prompt)
+                backend = "llama-cli"
+                accumulated = output or ""
+
+            reasoning, answer = _split_thinking(accumulated)
+            final_answer = answer if answer else "(empty response — try again)"
+
+            update_history_entry(entry_id, {
+                "refined": final_answer,
+                "reasoning": reasoning,
+                "status": "done",
+                "backend": backend,
+            })
+            yield ("data: " + json.dumps({
+                "done": True,
+                "reasoning": reasoning,
+                "refined": final_answer,
+                "backend": backend,
+            }) + "\n\n")
+
+        except Exception as e:
+            update_history_entry(entry_id, {"status": "error", "refined": str(e)})
+            yield "data: " + json.dumps({"done": True, "error": str(e)}) + "\n\n"
+        finally:
+            _mark_ai_idle()
+
+    return Response(
+        event_stream(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # =============================================================================
