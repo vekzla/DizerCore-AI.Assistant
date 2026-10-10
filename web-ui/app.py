@@ -210,6 +210,11 @@ def _mark_ai_idle():
 #   - Per-table primary-key columns (quest_template.ID, creature.guid, etc.)
 #   - Out-of-scope tables (character_*, account, battlenet_*)
 #   - Common investigation patterns by symptom
+#
+# Rule 1 now explicitly forbids invented C++ symbols (Class::method,
+# SPELL_*, SMART_*, CMSG_*) — the model was producing plausible-sounding
+# names like Player::CheckQuestCredit and SPELL_FEATHERING_THE_NEST that
+# don't exist in the reference tree.
 # =============================================================================
 
 SYSTEM_PROMPT = """You are a software engineer building a TrinityCore WoW emulation server. You investigate issues and produce structured prompts listing which files/folders to check and what to verify — SQL or C++ code. You never write the fix itself.
@@ -289,7 +294,7 @@ Common investigation patterns:
 
 RULES — violating any of these makes the output unusable:
 
-1. Name REAL files, tables, columns, functions, opcodes, and constants from the matched excerpts. Never invent.
+1. Name REAL files, tables, columns, functions, opcodes, and constants from the matched excerpts. Never invent a C++ class, method, enum, or `SPELL_*`/`SMART_*`/`CMSG_*` constant. If the exact symbol name is not visible in the matches, write "<symbol not shown — verify against source>" instead of a plausible guess.
 2. Do NOT copy angle-bracket placeholder text from the format template above into your output. Every <…> is instructional — replace it with concrete content from the matches, or omit the line.
 3. PROMPT FOR NEXT AI must be a prose paragraph, NOT a command list. Console commands (.reload, .quest complete) may be mentioned inside the paragraph as part of a test step; they are not the section's content.
 4. Do NOT write the actual fix, corrective SQL, or replacement C++ code. You describe WHAT to check and WHAT to verify.
@@ -740,7 +745,45 @@ def _build_system_prompt(mode, query=""):
 
 # =============================================================================
 # Thinking-block splitter
+#
+# _split_thinking() replaces the old _strip_thinking(). Reasoning content is
+# now preserved in a separate field so the UI can display it in a collapsible
+# panel. Empty reasoning is the common case — Qwen2.5-3B-Instruct does not
+# emit thinking blocks, but reasoning-capable models swapped in later will.
+#
+# _strip_placeholders() removes annotation lines that the model copies
+# verbatim out of the format template instead of replacing with concrete
+# content ("- what to look at inside it", etc.). Pure post-processing — no
+# extra tokens generated, no wall-clock cost.
 # =============================================================================
+
+# Matches the annotation lines the 3B model copies verbatim out of the
+# format template instead of replacing with concrete content. Each pattern
+# is anchored to a full line so we never strip legitimate output.
+_PLACEHOLDER_LINE = re.compile(
+    r"^[ \t]*-[ \t]*"
+    r"(?:"
+    r"what to look at inside it|"
+    r"what to verify inside it[^\n]*|"
+    r"specific thing to verify[^\n]*|"
+    r"specific row[^\n]*inspect[^\n]*|"
+    r"specific row, function[^\n]*"
+    r")"
+    r"[ \t]*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _strip_placeholders(text):
+    """Drop annotation lines that are literal copies of the format
+    template. Zero cost — runs on the same bytes already generated."""
+    if not text:
+        return text
+    out = _PLACEHOLDER_LINE.sub("", text)
+    # Collapse the blank lines left behind by the substitution
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
+
 
 def _split_thinking(text):
     """Return (reasoning, answer). Reasoning is anything inside a thinking
@@ -777,7 +820,7 @@ def _split_thinking(text):
     answer = re.sub(r"\[\s*End thinking\s*\]", "", answer,
                     flags=re.IGNORECASE)
 
-    return "\n".join(reasoning_chunks).strip(), answer.strip()
+    return "\n".join(reasoning_chunks).strip(), _strip_placeholders(answer)
 
 
 # =============================================================================
