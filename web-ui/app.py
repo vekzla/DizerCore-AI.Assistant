@@ -7,9 +7,13 @@
 #          fallback to llama-cli subprocess. Searches the reference repo using
 #          a SQLite FTS5 index when available, or ripgrep as fallback.
 #          Provides the Training endpoints for LoRA dataset + model mgmt.
+#
+#          Verification, feedback capture, and past-correction retrieval are
+#          delegated to training_loop.py (same directory).
 # =============================================================================
 
 import os
+import sys
 import json
 import subprocess
 import uuid
@@ -26,6 +30,10 @@ from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 # flask_cors intentionally not imported — the UI is same-origin only.
 # Leaving CORS(app) in place was the C1 finding (Access-Control-Allow-Origin: *).
 import psutil
+
+# Ensure training_loop is importable regardless of CWD
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import training_loop as tl
 
 app = Flask(__name__)
 
@@ -50,6 +58,7 @@ TRAINING_DIR = os.environ.get("TRAINING_DIR", "/data/training")
 TRAINED_MODEL = os.path.join(
     os.environ.get("MODELS_DIR", "/data/models"), "dizercore-q4_k_m.gguf")
 DATASET_FILE = os.path.join(TRAINING_DIR, "dizercore-dataset.jsonl")
+FEEDBACK_FILE = os.path.join(HISTORY_DIR, "feedback.jsonl")
 
 REPO_BRANCH = "main"
 GITEA_CONTAINER = "gitea"
@@ -61,8 +70,6 @@ REPO_SEARCH_CHAR_LIMIT = 4000
 REPO_SEARCH_TIMEOUT = 10
 REPO_SEARCH_MAX_FILES_PER_KEYWORD = 500
 
-# Was 400; the structured output (4 FILES + 4 VERIFY + PROSE PROMPT) needed
-# headroom for the paragraph + Success: line, was getting truncated mid-sentence.
 GENERATE_MAX_TOKENS = 600
 
 WATCHER_TIMEOUT = 5
@@ -192,8 +199,7 @@ def _mark_ai_idle():
 #
 # Rule 1 forbids invented C++ symbols. Also forbids using a C++ class name
 # (SpellScriptNames, SpellMgr, ObjectMgr) as a table name.
-# Rule 6 requires the Success: line to be the POSITIVE fixed outcome, never
-# the current broken state.
+# Rule 6 requires the Success: line to be the POSITIVE fixed outcome.
 # Rule 7 forbids copying the STRUCTURE EXAMPLE values.
 # =============================================================================
 
@@ -288,9 +294,6 @@ RULES — violating any of these makes the output unusable:
 6. End the PROMPT FOR NEXT AI section with exactly one line beginning "Success: " that states the POSITIVE observable result when the issue is FIXED. Never phrase Success as the current broken state. Example: "Success: the quest credit fires when the player kills Lyssabel Dawnpetal." NOT "Success: the row is missing."
 7. The STRUCTURE EXAMPLE above uses fictional values (ExampleRepo, ExampleFile.sql, ExampleTable, ExampleColumn, 00000, ExampleClass::ExampleMethod). NEVER copy them into your output. Every concrete value — path, table, column, ID — must come from the matched excerpts or the user's prompt. If the user's prompt does not supply an ID, do NOT invent one; write "<id not shown — ask user>" and stop."""
 
-# Per-domain rule lines appended to the shared prompt. _detect_modes() returns
-# one or more of these; all applicable blocks are appended so a query mixing
-# SQL and code paths gets both perspectives.
 DOMAIN_RULES = {
     "cpp": (
         "- Game logic lives under src/server/game/ — prefer those paths\n"
@@ -403,7 +406,6 @@ def _detect_modes(text):
                                      "spell_script"])
     if sql_like:
         modes.append("sql")
-        # Behaviour problems also need the C++ loader / handler path.
         if "cpp" not in modes:
             modes.append("cpp")
 
@@ -729,6 +731,17 @@ def _build_system_prompt(modes, query=""):
 
     parts = [SYSTEM_PROMPT]
 
+    # Prepend past corrections for similar prompts (best-effort; failure to
+    # retrieve must not block generation).
+    try:
+        corrections = tl.retrieve_corrections(query,
+                                              feedback_file=FEEDBACK_FILE)
+        corrections_block = tl.format_corrections_block(corrections)
+        if corrections_block:
+            parts.append(corrections_block)
+    except Exception as e:
+        app.logger.warning("corrections retrieval failed: %s", e)
+
     # Append DOMAIN HINTS for every applicable mode, deduplicated.
     seen_rules = set()
     rule_blocks = []
@@ -773,14 +786,6 @@ def _build_system_prompt(modes, query=""):
 
 # =============================================================================
 # Thinking-block splitter + placeholder stripper
-#
-# Three regexes:
-#   _PLACEHOLDER_LINE     — annotation lines the model copies from the format
-#                           template ("- what to look at inside it")
-#   _PLACEHOLDER_ANGLED   — whole-line <...> blocks copied from OUTPUT FORMAT
-#   _INVENTED_TABLE       — lines citing _conditional* companion tables
-#                           (don't exist in TrinityCore; gating lives in the
-#                           shared `conditions` table)
 # =============================================================================
 
 _PLACEHOLDER_LINE = re.compile(
@@ -796,18 +801,11 @@ _PLACEHOLDER_LINE = re.compile(
     re.MULTILINE | re.IGNORECASE,
 )
 
-# Matches a whole line that is just an angle-bracket instruction copied from
-# the OUTPUT FORMAT block. Requires 20+ chars inside so a legitimate short
-# output like "<id not shown — ask user>" survives (that one is 24 chars, so
-# bump the threshold to 30 to be safe).
 _PLACEHOLDER_ANGLED = re.compile(
     r"^[ \t]*<[^>\n]{30,}>[ \t]*$",
     re.MULTILINE,
 )
 
-# Invented _conditional* companion tables. TrinityCore does not use a
-# per-table _conditional suffix; all gating is in the shared `conditions`
-# table. Drop any output line that references such a table.
 _INVENTED_TABLE = re.compile(
     r"^.*\b\w+_conditional(?:_or|_not)?\b.*$",
     re.MULTILINE,
@@ -1065,6 +1063,19 @@ def generate():
                 output = _generate_via_cli(prompt, system_prompt)
                 fields["backend"] = "llama-cli"
 
+            # Verification + one retry on failure
+            verify = tl.verify_output(output or "", index_db=INDEX_DB)
+            if not verify["ok"]:
+                retry_extra = tl.format_verification_retry(verify["issues"])
+                retry_prompt = system_prompt + "\n\n" + retry_extra
+                if _server_ready():
+                    retry_out = _generate_via_server(prompt, retry_prompt)
+                else:
+                    retry_out = _generate_via_cli(prompt, retry_prompt)
+                if retry_out:
+                    output = retry_out
+            fields["verification"] = verify
+
             reasoning, answer = _split_thinking(output or "")
             fields["reasoning"] = reasoning
             fields["refined"] = answer if answer else "(empty response — try again)"
@@ -1146,6 +1157,26 @@ def generate_stream():
                 backend = "llama-cli"
                 accumulated = output or ""
 
+            # Verification + one retry on failure
+            verify = tl.verify_output(accumulated, index_db=INDEX_DB)
+            if not verify["ok"]:
+                retry_extra = tl.format_verification_retry(verify["issues"])
+                retry_prompt = system_prompt + "\n\n" + retry_extra
+                retry_buf = ""
+                for delta in _stream_via_server(prompt, retry_prompt):
+                    retry_buf += delta
+                    reasoning, answer = _split_thinking(retry_buf)
+                    if reasoning != last_reasoning or answer != last_answer:
+                        last_reasoning = reasoning
+                        last_answer = answer
+                        yield ("data: " + json.dumps({
+                            "reasoning": reasoning,
+                            "answer": answer,
+                            "verification_retry": True,
+                        }) + "\n\n")
+                if retry_buf:
+                    accumulated = retry_buf
+
             reasoning, answer = _split_thinking(accumulated)
             final_answer = answer if answer else "(empty response — try again)"
 
@@ -1154,12 +1185,14 @@ def generate_stream():
                 "reasoning": reasoning,
                 "status": "done",
                 "backend": backend,
+                "verification": verify,
             })
             yield ("data: " + json.dumps({
                 "done": True,
                 "reasoning": reasoning,
                 "refined": final_answer,
                 "backend": backend,
+                "verification": verify,
             }) + "\n\n")
 
         except Exception as e:
@@ -1173,6 +1206,61 @@ def generate_stream():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# =============================================================================
+# Feedback endpoints
+# =============================================================================
+
+@app.route("/api/feedback", methods=["POST"])
+def post_feedback():
+    data = request.json or {}
+    entry_id = data.get("id")
+    verdict = data.get("verdict")
+    correction = data.get("correction", "")
+
+    if verdict not in ("good", "bad"):
+        return jsonify({"error": "verdict must be 'good' or 'bad'"}), 400
+
+    entry = None
+    for e in load_history():
+        if e.get("id") == entry_id:
+            entry = e
+            break
+    if entry is None:
+        return jsonify({"error": "entry not found"}), 404
+
+    try:
+        tl.save_feedback(
+            prompt=entry.get("original", ""),
+            output=entry.get("refined", ""),
+            verdict=verdict,
+            correction=correction,
+            feedback_file=FEEDBACK_FILE,
+            entry_id=entry_id,
+        )
+    except Exception as e:
+        return jsonify({"error": f"could not save feedback: {e}"}), 500
+
+    return jsonify({"status": "recorded"})
+
+
+@app.route("/api/feedback/stats")
+def feedback_stats():
+    try:
+        records = tl.load_feedback(FEEDBACK_FILE)
+    except Exception:
+        records = []
+    good = sum(1 for r in records if r.get("verdict") == "good")
+    bad = sum(1 for r in records if r.get("verdict") == "bad")
+    with_correction = sum(1 for r in records
+                          if r.get("verdict") == "bad" and r.get("correction"))
+    return jsonify({
+        "total": len(records),
+        "good": good,
+        "bad": bad,
+        "corrections": with_correction,
+    })
 
 
 # =============================================================================
@@ -1679,6 +1767,16 @@ def _collect_system_info():
     except Exception as e:
         errors.append(f"history: {e}")
         info["history_count"] = None
+
+    try:
+        fb = tl.load_feedback(FEEDBACK_FILE)
+        info["feedback_total"] = len(fb)
+        info["feedback_corrections"] = sum(
+            1 for r in fb
+            if r.get("verdict") == "bad" and r.get("correction"))
+    except Exception:
+        info["feedback_total"] = None
+        info["feedback_corrections"] = None
 
     if errors:
         info["_errors"] = errors
