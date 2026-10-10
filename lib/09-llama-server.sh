@@ -6,6 +6,11 @@
 # Purpose: Register llama-server systemd unit and wait for the model to load.
 #          Context window is 8192 so the model has room for retrieved file
 #          windows (4 files × ~3000 chars).
+#
+#          --cache-reuse 256: reuse the KV cache across requests when the
+#          prompt prefix (system prompt + game-data.txt) matches the previous
+#          request. Cuts prefill from ~115s to ~15s on every request after
+#          the first.
 # =============================================================================
 
 install_llama_server() {
@@ -33,6 +38,7 @@ ExecStart=${LLAMA_DIR}/build/bin/llama-server \\
   --ctx-size 8192 \\
   --n-predict 400 \\
   --temp 0.3 \\
+  --cache-reuse 256 \\
   --no-webui
 Restart=on-failure
 RestartSec=10
