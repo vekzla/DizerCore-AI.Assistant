@@ -3,9 +3,29 @@
 # DizerCore AI Assistant
 # -----------------------------------------------------------------------------
 # File:    training/dataset-builder.py
-# Purpose: Walk ALL reference repos under /data/reference and produce training
-#          examples. Same expansion filter as web-ui/indexer.py. Same
-#          character/auth-DB exclusion. Table-aware ID column names.
+# Purpose: Walk ALL reference repos under /data/reference (TrinityCore mirror
+#          + per-table schema dump repos) and produce training examples that
+#          teach the model how the codebase is structured — file roles,
+#          function inventories, SQL table usage, and investigation prompts.
+#
+#          Tables are NOT hardcoded: a schema pass reads each repo's own SQL
+#          files (CREATE TABLE / INSERT INTO) to discover the real table set,
+#          which IDs exist in which tables, and which files reference each
+#          table. Investigation examples therefore name real files and
+#          sibling tables and emit a ready-to-use prompt for a follow-up AI.
+#
+#          Paths written into examples are "<RepoName>/<relpath>" — identical
+#          to what the FTS5 index stores, so runtime matches line up with
+#          what the adapter was trained on.
+#
+#          User feedback from the Web UI (training_loop.feedback_to_training_
+#          examples) is merged into the output as additional examples when
+#          the feedback module is importable.
+#
+# Output:  /data/training/dizercore-dataset.jsonl
+#          Line 1 is a metadata record carrying the base model repo so the
+#          training notebook automatically trains whatever model the user
+#          installed on the Pi.
 # =============================================================================
 
 import hashlib
@@ -17,6 +37,20 @@ from collections import defaultdict
 
 REFERENCE_DIR = os.environ.get("REFERENCE_DIR", "/data/reference")
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "/data/training/dizercore-dataset.jsonl")
+FEEDBACK_FILE = os.environ.get("FEEDBACK_FILE",
+                               "/data/prompt-history/feedback.jsonl")
+
+# Try to import the shared training_loop module for feedback merging.
+# Located in ../web-ui relative to this file. If missing (e.g. running on a
+# stripped-down Pi), we silently skip the feedback merge.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_WEBUI_DIR = os.path.normpath(os.path.join(_HERE, "..", "web-ui"))
+if _WEBUI_DIR not in sys.path:
+    sys.path.insert(0, _WEBUI_DIR)
+try:
+    import training_loop as tl  # type: ignore
+except Exception:
+    tl = None
 
 INCLUDE_EXTENSIONS = {".cpp", ".h", ".hpp", ".sql", ".cs", ".inc", ".lua"}
 MAX_WHOLE_FILE_BYTES = 4000
@@ -26,13 +60,15 @@ MAX_TABLE_EXAMPLES = 500
 MAX_IDS_PER_TABLE = 40
 MAX_FILES_PER_TABLE = 20
 
+# Investigation examples: up to this many phrasing variants emitted per file
+# during the walk, then upsampled until they reach this fraction of the
+# dataset (they're what teaches the runtime output format).
 INV_VARIANTS_PER_FILE = 2
 INV_TARGET_FRACTION = 0.15
 INV_POOL_CAP = 6000
 
 SKIP_DIRS = {".git", "dep", "contrib", "doc", "docs", "tests", "cmake",
              "build", "bin", "node_modules"}
-
 
 # ---- Change 1: expansion filter (mirrors indexer.py should_include_path) ----
 SQL_INCLUDE_DIRS = {"12.x"}
@@ -57,16 +93,10 @@ def _sql_path_allowed(rel):
 
 
 # ---- Change 2: character/auth DB exclusion ----
-# Unambiguous character-DB prefixes (safe as startswith — no world tables
-# share these stems).
 CHARACTER_DB_PREFIXES = (
     "character_", "battlenet_", "guild_", "arena_", "gm_",
 )
 
-# Exact-match character/auth tables whose names are also prefixes of
-# legitimate world-DB tables (mail_level_reward, mail_loot_template,
-# pet_name_generation, pet_levelstats, etc.). Must be exact so world
-# content isn't collaterally dropped.
 CHARACTER_DB_EXACT = {
     "account",
     "item_instance",
@@ -93,7 +123,11 @@ def _is_character_or_auth_table(name):
 
 
 # ---- Change 3: table-aware ID column name ----
+# For most tables the "identifier the user asks about" is the same as the
+# primary key. But for the quest-link tables, the user typically asks by
+# QUEST id, not creature entry — so the correct filter is `quest`, not `id`.
 TABLE_ID_COLUMN = {
+    # quest pipeline
     "quest_template": "ID",
     "quest_template_addon": "ID",
     "quest_objectives": "ID",
@@ -101,10 +135,12 @@ TABLE_ID_COLUMN = {
     "quest_request_items": "ID",
     "quest_poi": "QuestID",
     "quest_poi_points": "QuestID",
-    "creature_queststarter": "id",
-    "creature_questender": "id",
-    "gameobject_queststarter": "id",
-    "gameobject_questender": "id",
+    # quest <-> creature links: user filters by quest id
+    "creature_queststarter": "quest",
+    "creature_questender": "quest",
+    "gameobject_queststarter": "quest",
+    "gameobject_questender": "quest",
+    # creatures / gameobjects
     "creature_template": "entry",
     "creature_template_addon": "entry",
     "creature": "guid",
@@ -116,14 +152,18 @@ TABLE_ID_COLUMN = {
     "gameobject_template_addon": "entry",
     "gameobject": "guid",
     "gameobject_loot_template": "Entry",
+    # spells
     "spell_area": "spell",
     "spell_script_names": "spell_id",
     "spell_group": "id",
     "spell_proc": "SpellId",
+    # smart
     "smart_scripts": "entryorguid",
+    # conditions / loot
     "conditions": "SourceEntry",
     "reference_loot_template": "Entry",
     "item_loot_template": "Entry",
+    # gossip / text
     "gossip_menu": "MenuID",
     "gossip_menu_option": "MenuID",
     "npc_text": "ID",
@@ -131,6 +171,7 @@ TABLE_ID_COLUMN = {
     "points_of_interest": "ID",
     "waypoints": "entry",
     "waypoint_data": "id",
+    # dbc / items
     "item_template": "entry",
 }
 
@@ -138,10 +179,6 @@ TABLE_ID_COLUMN = {
 def _id_column(table):
     return TABLE_ID_COLUMN.get(table, "entry")
 
-
-# =============================================================================
-# Regexes and constants
-# =============================================================================
 
 TABLE_REF_RE = re.compile(
     r"\b(?:from|into|update|join|table)\s+`?(\w+)`?",
@@ -186,9 +223,11 @@ TABLE_IDS = defaultdict(set)
 TABLE_FILES = defaultdict(set)
 
 
-# =============================================================================
-# Problem phrasings — hash-stable so rebuilds are deterministic
-# =============================================================================
+# ---------------------------------------------------------------------------
+# Varied problem phrasings — one formulaic template taught the model to key
+# off a fixed string instead of real user language. Variant selection is
+# hash-stable so a rebuild produces deterministic output.
+# ---------------------------------------------------------------------------
 
 PROBLEM_SQL_TEMPLATES = [
     "{table} entry {id} is not behaving as expected (quest/item/spell not working).",
@@ -257,7 +296,6 @@ def repo_rel(repo, rel):
 def iter_repo_files(repo, exts=None):
     for root, dirs, files in os.walk(repo):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-        # Change 2: skip character/auth directories outright.
         dirs[:] = [d for d in dirs
                    if d.lower() not in ("characters", "auth", "authserver",
                                         "character", "logon", "realmd")]
@@ -269,7 +307,6 @@ def iter_repo_files(repo, exts=None):
                 continue
             full = os.path.join(root, fname)
             rel = os.path.relpath(full, repo)
-            # Change 1: expansion gate on SQL — mirrors indexer.py.
             if ext == ".sql" and not _sql_path_allowed(rel):
                 continue
             yield full, rel
@@ -659,6 +696,20 @@ def build():
     print(f"Base model tag: {base_repo} (install key '{model_key}')", flush=True)
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 
+    # ---- merge user feedback as extra training examples ----
+    feedback_examples = []
+    if tl is not None:
+        try:
+            feedback_examples = tl.feedback_to_training_examples(FEEDBACK_FILE)
+            if feedback_examples:
+                print(f"  merged {len(feedback_examples)} feedback example(s) "
+                      f"from {FEEDBACK_FILE}", flush=True)
+        except Exception as e:
+            print(f"  feedback merge skipped ({e})", flush=True)
+    else:
+        print("  training_loop module not importable — feedback merge disabled",
+              flush=True)
+
     for repo in repos:
         discover_schema(repo)
     print(f"  discovered {len(KNOWN_TABLES)} tables, "
@@ -681,6 +732,12 @@ def build():
     with open(OUTPUT_FILE, "w") as out:
         meta = {"_meta": True, "base_model": base_repo, "install_key": model_key}
         out.write(json.dumps(meta) + "\n")
+
+        # Feedback examples go in first — they represent actual corrections
+        # the user made, so they should always be present regardless of
+        # later truncation from INV_POOL_CAP.
+        for fex in feedback_examples:
+            emit(fex, "feedback")
 
         print("Pass 2: generating examples ...", flush=True)
         for repo in repos:
