@@ -298,12 +298,20 @@ RULES — violating any of these makes the output unusable:
 DOMAIN_RULES = {
     "cpp": (
         "- Game logic lives under src/server/game/ — prefer those paths\n"
+        "- Spell script registration (AddSC_*) lives under "
+        "src/server/scripts/Spells/ in files named spell_<class>.cpp, and "
+        "the registration call site is src/server/scripts/Spells/"
+        "spell_script_loader.cpp — do not confuse these with the spell "
+        "system files under src/server/game/Spells/\n"
         "- Name the real Class::method when the matches show one\n"
         "- Check declaration vs definition mismatch (header vs .cpp in the "
         "same directory tree)\n"
         "- List callers and early-exit paths as things to verify\n"
         "- Packet structs live in src/server/game/Server/Packets/*Packets.cpp; "
-        "handlers in src/server/game/Handlers/*Handler.cpp"
+        "handlers in src/server/game/Handlers/*Handler.cpp\n"
+        "- If NO C++ file appears in the matched excerpts, do not invent a "
+        "specific filename — write \"<file not shown — verify against "
+        "source>\" and name only the directory tree where it likely lives"
     ),
     "sql": (
         "- World DB tables: quest_template, quest_template_addon, "
@@ -321,9 +329,14 @@ DOMAIN_RULES = {
         "- Character DB / auth DB tables are OUT OF SCOPE (character_*, "
         "account, battlenet_*, guild_*, arena_*, mail, pet_*)\n"
         "- If the problem involves game behaviour (not just data presence), "
-        "also name the C++ code path that reads the affected table — e.g. "
-        "ObjectMgr.cpp, SpellMgr.cpp, or the relevant AI script loader — "
-        "even if no C++ file appears in the matches"
+        "and a C++ file appears in the matched excerpts, name the C++ code "
+        "path that reads the affected table. If NO C++ file appears in the "
+        "matches, do NOT invent a filename — write "
+        "\"<file not shown — verify against source>\" in FILES TO CHECK and, "
+        "in WHAT TO VERIFY, name the DIRECTORY most likely to contain the "
+        "loader (e.g. src/server/game/Spells/, src/server/scripts/Spells/, "
+        "src/server/game/AI/SmartScripts/). Never name a specific .cpp that "
+        "is not shown in the matches."
     ),
     "smart": (
         "- smart_scripts columns: entryorguid, source_type, event_type, "
@@ -696,30 +709,72 @@ def _search_reference_repo(query):
 
 
 def _format_repo_matches(result):
-    if not result or not result.get("matches"):
+    if not result:
         return ""
     repo = result.get("repo", "reference")
     source = result.get("source", "unknown")
     kw = result.get("rarest_keyword", "")
+
+    matches = result.get("matches") or []
+    sql_matches = [m for m in matches if m["path"].lower().endswith(".sql")]
+    cpp_matches = [m for m in matches
+                   if m["path"].lower().endswith((".cpp", ".h", ".hpp",
+                                                  ".cc", ".cxx", ".hh"))]
+    other = [m for m in matches if m not in sql_matches and m not in cpp_matches]
+
+    if not matches:
+        return (
+            "MATCHED FILES IN REFERENCE REPO: NONE.\n"
+            "Search returned no matching files. Do NOT cite any specific "
+            "file path, table, symbol, or constant — write "
+            "\"<not shown — verify against source>\" for every concrete "
+            "value, and use WHAT TO VERIFY to name only the directory "
+            "trees most likely to contain the answer."
+        )
+
     lines = [f"MATCHED FILES IN REFERENCE REPO ({repo}) [via {source}]"]
     if kw:
         lines.append(f"(matched on keyword: \"{kw}\")")
-    for m in result["matches"]:
-        lines.append(f"\n### {m['path']}\n{m['snippet']}")
+
+    lines.append(f"\n=== SQL MATCHES ({len(sql_matches)}) ===")
+    if sql_matches:
+        for m in sql_matches:
+            lines.append(f"\n### {m['path']}\n{m['snippet']}")
+    else:
+        lines.append("(none — do NOT cite any table or SQL row that is not "
+                     "shown here. Write \"<column not shown — verify against "
+                     "schema>\" if you need a specific column.)")
+
+    lines.append(f"\n=== C++ MATCHES ({len(cpp_matches)}) ===")
+    if cpp_matches:
+        for m in cpp_matches:
+            lines.append(f"\n### {m['path']}\n{m['snippet']}")
+    else:
+        lines.append("(none — do NOT cite any specific .cpp or .h path. "
+                     "Name only the DIRECTORY most likely to contain the "
+                     "code (e.g. src/server/game/Spells/ or "
+                     "src/server/scripts/Spells/) and write "
+                     "\"<file not shown — verify against source>\" in "
+                     "FILES TO CHECK.)")
+
+    if other:
+        lines.append(f"\n=== OTHER MATCHES ({len(other)}) ===")
+        for m in other:
+            lines.append(f"\n### {m['path']}\n{m['snippet']}")
+
     lines.append(
         "\nIMPORTANT — READ CAREFULLY:\n"
         "- The files above are REAL excerpts from the user's reference repo.\n"
         "- Every file path, table name, and column name you cite MUST appear "
-        "in these excerpts verbatim.\n"
-        "- If a needed column is not shown, write \"<column not shown — verify "
-        "against schema>\" and stop.\n"
-        "- Never invent companion tables. Cite only tables visible in the "
-        "matches. TrinityCore has NO `_conditional`, `_conditional_or`, or "
-        "`_conditional_not` tables — all gating lives in the shared "
-        "`conditions` table.\n"
+        "in the SQL MATCHES or C++ MATCHES sections above.\n"
+        "- If a section above says '(none)', the answer for that domain is "
+        "\"<file not shown — verify against source>\" or \"<column not shown "
+        "— verify against schema>\". Do NOT invent a name.\n"
+        "- Never invent companion tables. TrinityCore has NO `_conditional`, "
+        "`_conditional_or`, or `_conditional_not` tables — all gating lives "
+        "in the shared `conditions` table.\n"
         "- Character DB and auth DB tables (character_*, account, battlenet_*, "
-        "guild_*, arena_*, mail, pet_*) are OUT OF SCOPE — do not cite them "
-        "even if a match contains them.\n"
+        "guild_*, arena_*, mail, pet_*) are OUT OF SCOPE.\n"
         "- PROMPT FOR NEXT AI is prose, not a command list."
     )
     return "\n".join(lines)
