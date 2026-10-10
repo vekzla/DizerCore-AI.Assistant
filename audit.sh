@@ -214,15 +214,15 @@ grep -q "vm.swappiness" /etc/sysctl.conf 2>/dev/null && OK "sysctl: $(grep vm.sw
 BOOTCFG="/boot/firmware/config.txt"; [[ -f "$BOOTCFG" ]] || BOOTCFG="/boot/config.txt"  
 [[ -f "$BOOTCFG" ]] && grep -qE "^arm_freq=" "$BOOTCFG" && OK "Overclock: $(grep ^arm_freq "$BOOTCFG") ($BOOTCFG)" || WARN "No overclock"
 
-# 14. Logs
-HDR "14/14: Logs"
-for log in /var/log/dizercore-install.log /var/log/dizercore-uninstall.log; do
-  if [[ -f "$log" ]]; then
-    OK "$log ($(du -h "$log" | cut -f1), $(wc -l < "$log") lines)"
-    NOTE "  Errors: $(grep -c '\[ERROR' "$log" 2>/dev/null || echo 0)  Warnings: $(grep -c '\[WARN' "$log" 2>/dev/null || echo 0)"
-  else
-    WARN "$log (missing)"
-  fi
+# 14. Logs  
+HDR "14/14: Logs"  
+for log in /var/log/dizercore-install.log /var/log/dizercore-uninstall.log; do  
+  if [[ -f "$log" ]]; then  
+    OK "$log ($(du -h "$log" | cut -f1), $(wc -l < "$log") lines)"  
+    NOTE "Errors: $(grep -c '\[ERROR' "$log" 2>/dev/null || true)  Warnings: $(grep -c '\[WARN' "$log" 2>/dev/null || true)"  
+  else  
+    WARN "$log (missing)"  
+  fi  
 done
 
 echo ""
