@@ -16,31 +16,29 @@ Describe a problem → get a structured WoW prompt → copy it to any AI coding 
 
 ## Threat Model  
   
-DizerCore is designed for a **single-user Pi on a trusted LAN**. Read this  
-before exposing it anywhere else:  
+DizerCore is built for a **single-user Raspberry Pi on a trusted LAN**. Read this before exposing it anywhere else.  
   
-- The Web UI requires a shared-secret token (`X-DizerCore-Token` header) on  
-  every `/api/*` request. The token is generated at install time and stored  
-  in `/data/web-ui/.api-token` (mode 600). The UI fetches it via  
-  `/api/token`, which browsers can only read same-origin — this is what  
-  stops cross-site request forgery.  
-- Anyone on the LAN who can read the token has full API access — including  
-  model deploy, index rebuild, and triggering a root-privileged  
-  `install.sh` re-run via `/api/update`.  
-- The token is **not** a defense against someone with shell access to the  
-  Pi — they can just read the file. It exists to stop CSRF and casual LAN  
-  probing.  
-- **Never port-forward port 5000** or put the Pi on an untrusted network.  
-  For remote access use SSH port-forwarding  
-  (`ssh -L 5000:127.0.0.1:5000 pi@<ip>`) or Tailscale.  
-- NOPASSWD sudo rules in `/etc/sudoers.d/dizercore-update` cover exactly  
-  two targets: `install.sh` (the update path) and  
-  `/usr/local/sbin/dizercore-training-deploy` (model swap). The deploy  
-  helper is root-owned; `install.sh` lives under the user-owned source  
-  dir, which is a known residual risk — see below.  
-- Plain HTTP, no TLS. Fine on a trusted LAN; don't send anything sensitive  
-  through the UI over a network you don't control.
-
+### Authentication  
+- Every `/api/*` request requires a shared-secret token sent as the `X-DizerCore-Token` header.  
+- The token is generated at install time and stored in `/data/web-ui/.api-token` (mode `600`).  
+- The browser fetches it from `/api/token`, which is readable **same-origin only** — this is what stops CSRF.  
+  
+### What the token does and doesn't protect  
+- **Protects against:** cross-site request forgery and casual LAN probing.  
+- **Does NOT protect against:** anyone who can read the token file. With the token, an attacker has full API access — model deploy, index rebuild, and a root-privileged `install.sh` re-run via `/api/update`. Anyone with shell access to the Pi can simply read the file.  
+  
+### Network exposure  
+- **Never port-forward port 5000** and never put the Pi on an untrusted network.  
+- For remote access, use SSH port-forwarding (`ssh -L 5000:127.0.0.1:5000 pi@<ip>`) or Tailscale.  
+- Traffic is plain HTTP — **no TLS**. Fine on a trusted LAN; don't send anything sensitive over a network you don't control.  
+  
+### Sudo surface  
+NOPASSWD rules live in `/etc/sudoers.d/dizercore-update` and cover exactly two targets:  
+  
+| Target | Purpose | Owner |  
+|--------|---------|-------|  
+| `/usr/local/sbin/dizercore-training-deploy` | Model swap | root (safe) |  
+| `install.sh` | Update path | user-owned source dir (residual risk — see below) |
 
 ## Install
 
