@@ -55,23 +55,14 @@ REPO_BRANCH = "main"
 GITEA_CONTAINER = "gitea"
 POSTGRES_CONTAINER = "gitea-db"
 
-# Perf: was 8 files / 6000 chars. Trimmed to 5 files / 4000 chars to cut
-# prefill time on the Pi (each ~1500 chars ≈ 375 tokens of system prompt).
 REPO_SEARCH_MAX_FILES = 5
 REPO_SEARCH_CONTEXT_LINES = 4
 REPO_SEARCH_CHAR_LIMIT = 4000
 REPO_SEARCH_TIMEOUT = 10
 REPO_SEARCH_MAX_FILES_PER_KEYWORD = 500
 
-# Investigation output is multi-section (FILES TO CHECK / WHAT TO VERIFY /
-# PROMPT FOR NEXT AI) — 256 tokens truncated it mid-block. 700 gave headroom
-# but doubled wall-clock on the Pi; 400 covers the structured output with
-# ~10% slack.
 GENERATE_MAX_TOKENS = 400
 
-# Seconds to wait for the index-watcher control API. Was 1s — too short
-# while the indexer saturates the Pi's CPU, which made the UI report
-# "watcher: down" even though the service was running.
 WATCHER_TIMEOUT = 5
 
 REPO_EXCLUDE_GLOBS = [
@@ -79,15 +70,10 @@ REPO_EXCLUDE_GLOBS = [
     "!.git/**", "!node_modules/**", "!*.min.*",
 ]
 
-# ---- RAG filter (Change 1) --------------------------------------------------
-# Reject SQL paths from expansions we don't target. 3.3.5a character-migration
-# SQL was leaking into matches and poisoning the model's citations.
 ALLOWED_SQL_PREFIXES = ("sql/old/12.x/", "sql/updates/12.x/", "sql/base/")
 
 
 def _sql_path_allowed(path):
-    """path is '<RepoName>/<relpath>'. Non-SQL always passes. SQL passes
-    only if it lives under a currently-supported expansion."""
     _, _, rel = path.partition("/")
     rel_lower = rel.lower().replace("\\", "/")
     if not rel_lower.endswith(".sql"):
@@ -199,11 +185,12 @@ def _mark_ai_idle():
 # constant in the training notebook — the LoRA adapter is trained on that
 # exact persona, so runtime and training must match.
 #
-# The format block now uses a CONCRETE WORKED EXAMPLE instead of <angle-
-# bracket placeholder> syntax. The earlier placeholder form caused the model
-# to output the placeholders verbatim ("- what to look at inside it") and to
-# produce command lists instead of prose in PROMPT FOR NEXT AI. The worked
-# example also fixes the missing "Success: " line by showing it explicitly.
+# The STRUCTURE EXAMPLE block uses deliberately fictional values
+# (ExampleRepo, ExampleFile.sql, 00000) and carries a "DO NOT COPY" banner.
+# The previous version used realistic-looking values (real repo path,
+# quest ID 94210) and the 3B model would echo them verbatim into output
+# that appeared to reference real artifacts but referenced nothing from
+# the matched excerpts.
 #
 # DOMAIN KNOWLEDGE section embeds TrinityCore 12.1.0 Midnight facts:
 #   - Real file layout (src/server/game/, sql/old/12.x/world/)
@@ -211,10 +198,8 @@ def _mark_ai_idle():
 #   - Out-of-scope tables (character_*, account, battlenet_*)
 #   - Common investigation patterns by symptom
 #
-# Rule 1 now explicitly forbids invented C++ symbols (Class::method,
-# SPELL_*, SMART_*, CMSG_*) — the model was producing plausible-sounding
-# names like Player::CheckQuestCredit and SPELL_FEATHERING_THE_NEST that
-# don't exist in the reference tree.
+# Rule 1 forbids invented C++ symbols.
+# Rule 7 forbids copying example values.
 # =============================================================================
 
 SYSTEM_PROMPT = """You are a software engineer building a TrinityCore WoW emulation server. You investigate issues and produce structured prompts listing which files/folders to check and what to verify — SQL or C++ code. You never write the fix itself.
@@ -236,25 +221,25 @@ WHAT TO VERIFY:
 PROMPT FOR NEXT AI:
 <one self-contained paragraph. Names the file(s), table(s), column(s), and row id(s) discovered above. States what to inspect. Ends with a line beginning "Success: " that states the observable in-game result.>
 
-WORKED EXAMPLE — match this level of specificity in every section:
+STRUCTURE EXAMPLE — ILLUSTRATION ONLY, DO NOT COPY
+
+The values below are deliberately fictional: ExampleRepo, ExampleFile.sql,
+ExampleTable, ExampleColumn, 00000. They exist to demonstrate the SHAPE of
+the output. Every path, table, column, and number in YOUR output must come
+from the matched files or from the user's prompt — never from this example.
 
 FILES TO CHECK:
-1. DizerCore-WoW/sql/old/12.x/world/2026_03_17_00_world.sql
-   - Rows inserting into quest_template where ID = 94210
-2. DizerCore-WoW/sql/old/12.x/world/creature_questender.sql
-   - Rows where id = 94210 linking a creature to the quest
-3. Search the repo for smart_scripts rows with entryorguid = 94210
-   - action_type = 58 (ADD_QUEST_CREDIT) with action_param1 = 94210
+1. ExampleRepo/ExampleFolder/ExampleFile.sql
+   - Rows in ExampleTable where ExampleColumn = 00000
+2. ExampleRepo/ExampleFolder/ExampleFile.cpp
+   - Function ExampleClass::ExampleMethod and its early-exit paths
 
 WHAT TO VERIFY:
-- SELECT * FROM quest_template WHERE ID = 94210;
-- SELECT * FROM creature_questender WHERE id = 94210;
-- SELECT * FROM smart_scripts WHERE entryorguid = 94210 AND action_type = 58;
-- Confirm the quest_template_addon row exists for ID = 94210
+- SELECT * FROM ExampleTable WHERE ExampleColumn = 00000;
+- <next concrete check>
 
 PROMPT FOR NEXT AI:
-Investigate quest 94210 in the world database. Run the SELECT queries under WHAT TO VERIFY and confirm each row exists with agreeing column values — especially creature_questender linking the correct creature as quest ender and smart_scripts action_type = 58 firing with action_param1 = 94210. Then check the conditions table for any SourceType = 20 or 31 rows gating the credit. If a row is missing, write the corrective INSERT; if a value disagrees, write the corrective UPDATE. Test in-game with .quest complete 94210.
-Success: the quest objectives for 94210 increment when the player fulfills the requirement.
+<one prose paragraph naming the REAL file(s), table(s), column(s), and row id(s) found in the matched excerpts. Ends with a "Success: " line describing the observable in-game result.>
 
 TRINITYCORE 12.1.0 MIDNIGHT — DOMAIN FACTS
 
@@ -299,7 +284,8 @@ RULES — violating any of these makes the output unusable:
 3. PROMPT FOR NEXT AI must be a prose paragraph, NOT a command list. Console commands (.reload, .quest complete) may be mentioned inside the paragraph as part of a test step; they are not the section's content.
 4. Do NOT write the actual fix, corrective SQL, or replacement C++ code. You describe WHAT to check and WHAT to verify.
 5. If a needed column name is not visible in the matched excerpts, write "<column not shown — verify against schema>" and stop.
-6. End the PROMPT FOR NEXT AI section with exactly one line beginning "Success: " that states the observable in-game result."""
+6. End the PROMPT FOR NEXT AI section with exactly one line beginning "Success: " that states the observable in-game result.
+7. The STRUCTURE EXAMPLE above uses fictional values (ExampleRepo, ExampleFile.sql, ExampleTable, ExampleColumn, 00000, ExampleClass::ExampleMethod). NEVER copy them into your output. Every concrete value — path, table, column, ID — must come from the matched excerpts or the user's prompt. If the user's prompt does not supply an ID, do NOT invent one; write "<id not shown — ask user>" and stop."""
 
 # Per-domain rule lines appended to the shared prompt. _detect_mode() picks
 # ONE of these — the persona and output format never change.
@@ -744,22 +730,9 @@ def _build_system_prompt(mode, query=""):
 
 
 # =============================================================================
-# Thinking-block splitter
-#
-# _split_thinking() replaces the old _strip_thinking(). Reasoning content is
-# now preserved in a separate field so the UI can display it in a collapsible
-# panel. Empty reasoning is the common case — Qwen2.5-3B-Instruct does not
-# emit thinking blocks, but reasoning-capable models swapped in later will.
-#
-# _strip_placeholders() removes annotation lines that the model copies
-# verbatim out of the format template instead of replacing with concrete
-# content ("- what to look at inside it", etc.). Pure post-processing — no
-# extra tokens generated, no wall-clock cost.
+# Thinking-block splitter + placeholder stripper
 # =============================================================================
 
-# Matches the annotation lines the 3B model copies verbatim out of the
-# format template instead of replacing with concrete content. Each pattern
-# is anchored to a full line so we never strip legitimate output.
 _PLACEHOLDER_LINE = re.compile(
     r"^[ \t]*-[ \t]*"
     r"(?:"
@@ -775,12 +748,9 @@ _PLACEHOLDER_LINE = re.compile(
 
 
 def _strip_placeholders(text):
-    """Drop annotation lines that are literal copies of the format
-    template. Zero cost — runs on the same bytes already generated."""
     if not text:
         return text
     out = _PLACEHOLDER_LINE.sub("", text)
-    # Collapse the blank lines left behind by the substitution
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out.strip()
 
