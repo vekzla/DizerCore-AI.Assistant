@@ -1,0 +1,3 @@
+# DizerCore model checksums — verified in lib/04-llama.sh before  
+# a downloaded .part file is promoted to the final .gguf (M2).  
+qwen2.5-3b-instruct-q4_k_m.gguf  <64-char hash here>
